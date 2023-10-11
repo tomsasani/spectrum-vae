@@ -158,10 +158,10 @@ def major_minor(matrix):
                     # if greater than 50% of haplotypes are ALT, reverse
                     # the REF/ALT polarization
                     haplotypes = 1 - haplotypes
-                    haplotypes[haplotypes == 0] = -1
+                    #haplotypes[haplotypes == 0] = -1
                     matrix[:, site_i, mut_i] = haplotypes
                 # if there are fewer derived than ancestral, keep the haplotypes as is
                 else:
-                    haplotypes[haplotypes == 0] = -1
+                    #haplotypes[haplotypes == 0] = -1
                     matrix[:, site_i, mut_i] = haplotypes
     return matrix

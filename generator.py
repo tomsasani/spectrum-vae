@@ -51,11 +51,11 @@ class Generator:
             # than haplotypes, so we need to divide the sample sizes by 2
             # to get the correct number of haplotypes.
 
-            root_dist_adj = util.add_noise(root_dist)
+            #root_dist_adj = util.add_noise(root_dist)
             ts = self.simulator(
                 parameters,
                 self.sample_size,
-                root_dist_adj,
+                root_dist,
                 self.rng,
                 mutator_threshold=mutator_threshold,
             )
