@@ -14,7 +14,7 @@ def get_transition_matrix(mutator_strength: float = 2.):
     mutations = ["C>T", "C>A", "C>G", "A>T", "A>C", "A>G"]
     lambdas = np.array([25, 10, 10, 10, 10, 35])
 
-    lambdas[0] *= mutator_strength
+    lambdas[1] *= mutator_strength
     lambdas = lambdas / np.sum(lambdas)
 
     transition_matrix = np.zeros((4, 4))
@@ -122,21 +122,7 @@ def simulate_exp(
     mutator_prob = params.mutator_prob.proposal(rng)
     if mutator_prob <= mutator_threshold:
         mu_effect_size = params.mutator_effect_size.proposal(rng)
-        # if we're simulating a mutator, first define the region of the segment
-        # in which the mutator should be active
-        # mutator_start = params.mutator_start.proposal(rng)
-        # mutator_length = params.mutator_length.proposal(rng)
-        # if mutator_start + mutator_length >= global_vars.L:
-        #     mutator_length = global_vars.L - mutator_start - 1
-        # ratemap = msprime.RateMap(
-        #     position=[
-        #         0,
-        #         mutator_start,
-        #         mutator_start + mutator_length,
-        #         global_vars.L,
-        #     ],
-        #     rate=[mu, mu * mu_effect_size, mu],
-        # )
+        
         # then, define the period of time in which the mutator should be active
         mu_emergence = params.mutator_emergence.proposal(rng)
 
@@ -151,20 +137,20 @@ def simulate_exp(
         mts = msprime.sim_mutations(
             ts,
             rate=mu,
-            model=normal_mutation_model,
-            start_time=mu_emergence,
+            model=mutator_mutation_model,
+            #start_time=mu_emergence,
             random_seed=seed,
             discrete_genome=False,
         )
         # and a higher rate afterward
-        mts = msprime.sim_mutations(
-            mts,
-            rate=mu,
-            model=mutator_mutation_model,
-            end_time=mu_emergence,
-            random_seed=seed,
-            discrete_genome=False,
-        )
+        # mts = msprime.sim_mutations(
+        #     mts,
+        #     rate=mu,
+        #     model=mutator_mutation_model,
+        #     end_time=mu_emergence,
+        #     random_seed=seed,
+        #     discrete_genome=False,
+        # )
 
     else:
         # otherwise, simulate constant mutation rate across the region for all time

@@ -106,7 +106,7 @@ def process_region(
     X = np.transpose(X, (1, 0, 2))
 
     # sum across channels
-    X = np.expand_dims(np.sum(X, axis=2), axis=2)
+    #X = np.expand_dims(np.sum(X, axis=2), axis=2)
 
     # if we have more than the necessary number of SNPs
     if mid >= half_S:
@@ -119,7 +119,7 @@ def process_region(
         # get inter-SNP distances, relative to the simualted region size
         distances_tiled = np.tile(distances[i:j], (n_haps, 1))
         # add final channel of inter-snp distances
-        # region[:, :, -1] = distances_tiled
+        #region[:, :, -1] = distances_tiled
 
     else:
         other_half_S = half_S + 1 if n_sites % 2 == 1 else half_S
@@ -131,7 +131,7 @@ def process_region(
         # tile the inter-snp distances down the haplotypes
         distances_tiled = np.tile(distances, (n_haps, 1))
         # add final channel of inter-snp distances
-        # region[:, i:j, -1] = distances_tiled
+        #region[:, i:j, -1] = distances_tiled
 
     return region
 
@@ -158,10 +158,10 @@ def major_minor(matrix):
                     # if greater than 50% of haplotypes are ALT, reverse
                     # the REF/ALT polarization
                     haplotypes = 1 - haplotypes
-                    #haplotypes[haplotypes == 0] = -1
+                    haplotypes[haplotypes == 0] = -1
                     matrix[:, site_i, mut_i] = haplotypes
                 # if there are fewer derived than ancestral, keep the haplotypes as is
                 else:
-                    #haplotypes[haplotypes == 0] = -1
+                    haplotypes[haplotypes == 0] = -1
                     matrix[:, site_i, mut_i] = haplotypes
     return matrix
