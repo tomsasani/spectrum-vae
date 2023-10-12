@@ -12,11 +12,11 @@ sim = simulation.simulate_exp
 # first, initialize generator object
 gen = generator.Generator(
     sim,
-    global_vars.NUM_HAPLOTYPES // 2,
+    [25],
     np.random.randint(1, 2**32),
 )
 
-N = 10_000
+N = 1_000
 
 # simulate a bunch of training examples
 train = gen.simulate_batch(N, root_dist, mutator_threshold=0)

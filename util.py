@@ -6,6 +6,7 @@ Date: 9/27/22
 
 # python imports
 import numpy as np
+from sklearn.neighbors import NearestNeighbors
 
 # our imports
 import global_vars
@@ -38,6 +39,20 @@ def inter_snp_distances(positions: np.ndarray, norm_len: int) -> np.ndarray:
             dist_vec.append((positions[i + 1] - positions[i]) / norm_len)
     else: dist_vec = []
     return np.array(dist_vec)
+
+
+def sort_min_diff(X):
+    '''this function takes in a SNP matrix with indv on rows and returns the same matrix with indvs sorted by genetic similarity.
+    this problem is NP, so here we use a nearest neighbors approx.  it's not perfect, but it's fast and generally performs ok.
+    assumes your input matrix is a numpy array'''
+    # reduce to 2 dims
+    assert len(X.shape) == 3
+    X[X < 0] = 0
+    X = np.sum(X, axis=2)
+    mb = NearestNeighbors(n_neighbors=len(X), metric='manhattan').fit(X)
+    v = mb.kneighbors(X)
+    smallest = np.argmin(v[0].sum(axis=1))
+    return v[1][smallest]
 
 
 def find_segregating_idxs(X: np.ndarray):
@@ -106,7 +121,7 @@ def process_region(
     X = np.transpose(X, (1, 0, 2))
 
     # sum across channels
-    #X = np.expand_dims(np.sum(X, axis=2), axis=2)
+    # X = np.expand_dims(np.sum(X, axis=2), axis=2)
 
     # if we have more than the necessary number of SNPs
     if mid >= half_S:
