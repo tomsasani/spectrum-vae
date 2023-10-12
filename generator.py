@@ -17,9 +17,9 @@ import tqdm
 
 class Generator:
 
-    def __init__(self, simulator, sample_size, seed):
+    def __init__(self, simulator, sample_sizes, seed):
         self.simulator = simulator
-        self.sample_size = sample_size
+        self.sample_sizes = sample_sizes
         self.rng = np.random.default_rng(seed)
 
         self.curr_params = None
@@ -34,7 +34,7 @@ class Generator:
         regions = np.zeros(
             (
                 batch_size,
-                self.sample_size * 2,
+                sum(self.sample_sizes) * 2,
                 global_vars.NUM_SNPS,
                 global_vars.NUM_CHANNELS,
             ),
@@ -54,7 +54,7 @@ class Generator:
             #root_dist_adj = util.add_noise(root_dist)
             ts = self.simulator(
                 parameters,
-                self.sample_size,
+                self.sample_sizes,
                 root_dist,
                 self.rng,
                 mutator_threshold=mutator_threshold,
