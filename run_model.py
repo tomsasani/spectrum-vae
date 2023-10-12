@@ -10,55 +10,18 @@ from tensorflow.keras import losses
 import tensorflow as tf
 import pandas as pd
 import wandb
+import argparse
 
-### define the sweep
-sweep_config = {"method": "random"}
-
-metric = {'name': 'validation_loss', 'goal': 'minimize'}
-
-sweep_config['metric'] = metric
-
-# set up parameters over which to sweep
-parameters_dict = {
-    'optimizer': {
-        'values': ['adam']
-    },
-    'initial_filters': {'values': [4, 8, 16, 32]},
-    'conv_layers': {'values': [2, 3]},
-    #'use_max_pooling': {'values': [False, True]},
-    'latent_dimensions': {'values': [8, 16, 32, 64, 128]},
-    'fc_layers': {'values': [0, 1, 2]},
-    'fc_layer_size': {
-        'values': [32, 64]
-    },
-    'dropout': {
-        'values': [0.3, 0.4, 0.5]
-    },
-    'learning_rate': {
-        # a flat distribution between 0 and 0.1
-        'distribution': 'uniform',
-        'min': 0,
-        'max': 1e-3
-    },
-    'batch_size': {
-        'values': [32, 64, 128],
-    },
-    'epochs': {'value': 10}
-}
-
-sweep_config['parameters'] = parameters_dict
-
-sweep_id = wandb.sweep(sweep_config, project="sweeps-demo")
 
 
 ### BUILD MODEL
 def build_model(
     initial_filters: int = 8,
     conv_layers: int = 2,
-    latent_dimensions: int = 16,
-    fc_layers: int = 1,
-    fc_layer_size: int = 64,
-    dropout: float = 0.2,
+    latent_dimensions: int = 8,
+    fc_layers: int = 0,
+    fc_layer_size: int = 32,
+    dropout: float = 0.5,
 ):
 
     model = autoencoder.CAE(
@@ -93,7 +56,6 @@ def build_data(batch_size: int = 32):
     return train_ds, test_ds
 
 
-#@tf.function
 def train_step(images, labels, model, optimizer, loss_object, train_loss):
     with tf.GradientTape() as tape:
         # training=True is only needed if there are layers with different
@@ -105,7 +67,7 @@ def train_step(images, labels, model, optimizer, loss_object, train_loss):
 
     train_loss(loss)
 
-#@tf.function
+
 def test_step(images, labels, model, loss_object, test_loss):
     # training=False is only needed if there are layers with different
     # behavior during training versus inference (e.g. Dropout).
@@ -148,90 +110,175 @@ def train_model_wandb(config=None):
 
             wandb.log({"validation_loss": validation_loss, "epoch": epoch})
 
-train_ds, test_ds = build_data()
-model = build_model()
-optimizer = build_optimizer()
-wandb.agent(sweep_id, train_model_wandb, count=50)
-# f, ax = plt.subplots()
-# n = 2
-# to_plot = np.arange(n)
-# f, axarr = plt.subplots(global_vars.NUM_CHANNELS, n * 2, figsize=(8, n * 6))
-# for channel_i in np.arange(global_vars.NUM_CHANNELS):
-#     for idx, plot_i in enumerate(to_plot):
-#         sns.heatmap(train_data[plot_i, :, :, channel_i], ax=axarr[channel_i, idx * 2], cbar=True)
-#         sns.heatmap(test_data[plot_i, :, :, channel_i], ax=axarr[channel_i, (idx * 2) + 1], cbar=True)
-# # for idx in range(n):
-# #     axarr[idx * 2].set_title("R")
-# #     axarr[(idx * 2) + 1].set_title("G")
-# f.tight_layout()
-# f.savefig("training.png", dpi=200)
+def main(args):
 
-# train_ds = tf.data.Dataset.from_tensor_slices(train_data).batch(BATCH_SIZE)
-# test_ds = tf.data.Dataset.from_tensor_slices(test_data).batch(BATCH_SIZE)
+    ### define the sweep
+    sweep_config = {"method": "random"}
 
-# train_ds, test_ds = tf.keras.utils.image_dataset_from_directory(
-#     "data/images/",
-#     batch_size=BATCH_SIZE,
-#     shuffle=False,
-#     image_size=(global_vars.NUM_HAPLOTYPES, global_vars.NUM_SNPS),
-#     color_mode="grayscale",
-#     validation_split=0.2,
-#     subset="both",
-#     labels=None,
-#     #seed=42,
-# )
+    metric = {'name': 'validation_loss', 'goal': 'minimize'}
 
-# normalization_layer = tf.keras.layers.Rescaling(1./255)
-# train_ds = train_ds.map(lambda x: (normalization_layer(x)))
-# test_ds = test_ds.map(lambda x: (normalization_layer(x)))
+    sweep_config['metric'] = metric
+
+    # set up parameters over which to sweep
+    parameters_dict = {
+        'optimizer': {
+            'values': ['adam']
+        },
+        'initial_filters': {'values': [4, 8, 16, 32]},
+        'conv_layers': {'values': [2, 3]},
+        'latent_dimensions': {'values': [8, 16, 32, 64]},
+        'fc_layers': {'values': [0, 1, 2]},
+        'fc_layer_size': {
+            'values': [32, 64]
+        },
+        'dropout': {
+            'values': [0.3, 0.4, 0.5]
+        },
+        'learning_rate': {
+            # a flat distribution between 0 and 0.1
+            'distribution': 'uniform',
+            'min': 0,
+            'max': 1e-3
+        },
+        'batch_size': {
+            'values': [32, 64],
+        },
+        'epochs': {'value': 10}
+    }
+
+    sweep_config['parameters'] = parameters_dict
+
+    with np.load("data/data.npz") as data:
+        train_data = data["train"]
+        test_data = data["test"]
+
+    f, ax = plt.subplots()
+    n = 2
+    to_plot = np.arange(n)
+    f, axarr = plt.subplots(global_vars.NUM_CHANNELS, n * 2, figsize=(12, n * 6))
+    for channel_i in np.arange(global_vars.NUM_CHANNELS):
+        for idx, plot_i in enumerate(to_plot):
+            sns.heatmap(
+                train_data[plot_i, :, :, channel_i],
+                ax=axarr[channel_i, idx * 2],
+                cbar=False,
+            )
+            sns.heatmap(
+                test_data[plot_i, :, :, channel_i],
+                ax=axarr[channel_i, (idx * 2) + 1],
+                cbar=False,
+            )
+    # for idx in range(n):
+    #     axarr[idx * 2].set_title("R")
+    #     axarr[(idx * 2) + 1].set_title("G")
+    f.tight_layout()
+    f.savefig("training.png", dpi=200)
+
+    if args.run_sweep:
+        sweep_id = wandb.sweep(sweep_config, project="sweeps-demo")
+        wandb.agent(sweep_id, train_model_wandb, count=args.search_size)
+    
+    else:
+        train_ds, test_ds = build_data()
+        model = build_model(fc_layers=0, latent_dimensions=8)
+        optimizer = build_optimizer()
+
+        train_loss = tf.keras.metrics.Mean(name='train_loss')
+        test_loss = tf.keras.metrics.Mean(name='test_loss')
+        loss_object = tf.keras.losses.MeanSquaredError()
+
+        res = []
+
+        prev_loss = np.inf
+        bad_epochs = 0
+
+        for epoch in range(10):
+            # Reset the metrics at the start of the next epoch
+            train_loss.reset_states()
+            test_loss.reset_states()
+
+            for images in train_ds:
+                train_step(images, images, model, optimizer, loss_object, train_loss)
+            for images in test_ds:
+                test_step(images, images, model, loss_object, test_loss)
+
+            validation_loss = test_loss.result()
+
+            if validation_loss < prev_loss:
+                prev_loss = validation_loss
+                bad_epochs = 0
+            else:
+                # count the number of epochs since we decreased the validation loss
+                if bad_epochs > 5:
+                    break
+                else:
+                    bad_epochs += 1
+                    prev_loss = validation_loss
+
+            print(
+                    f'Epoch {epoch + 1}, '
+                    f'Loss: {train_loss.result()}, '
+                    f'Test Loss: {validation_loss}, '
+            )
+            res.append({"Training loss": train_loss.result(),
+                        "Validation loss": validation_loss,
+                        "Epoch": epoch + 1})
+
+        res_df = pd.DataFrame(res)
+
+        f, ax = plt.subplots()
+        ax.plot(res_df["Training loss"], label="Training Loss")
+        ax.plot(res_df["Validation loss"], label="Validation Loss")
+        ax.legend()
+        f.savefig("loss.png", dpi=200)
+
+        # create some new simulated data. we'll use these data to figure out the reconstruction
+        # error of the model on unseen data.
+
+        root_dist = np.array([0.25, 0.25, 0.25, 0.25])
+
+        sim = simulation.simulate_exp
+
+        # first, initialize generator object
+        gen = generator.Generator(
+            sim,
+            global_vars.NUM_HAPLOTYPES // 2,
+            np.random.randint(1, 2**32),
+)
+
+        # simulate a bunch of training examples
+        normal_data = gen.simulate_batch(10, root_dist, mutator_threshold=0)
+        #mutator_data = gen.simulate_batch(100, root_dist, mutator_threshold=1)
+
+        encoded_data = model.encoder(normal_data).numpy()
+        decoded_data = model.decoder(encoded_data).numpy()
+
+        f, ax = plt.subplots()
+        n = 2
+        to_plot = np.arange(n)
+        f, axarr = plt.subplots(global_vars.NUM_CHANNELS, n * 2, figsize=(8, n * 6))
+        for channel_i in np.arange(global_vars.NUM_CHANNELS):
+            for idx, plot_i in enumerate(to_plot):
+                sns.heatmap(normal_data[plot_i, :, :, channel_i], ax=axarr[channel_i, idx * 2], cbar=False)
+                sns.heatmap(decoded_data[plot_i, :, :, channel_i], ax=axarr[channel_i, (idx * 2) + 1], cbar=False)
+        # for idx in range(n):
+        #     axarr[idx * 2].set_title("R")
+        #     axarr[(idx * 2) + 1].set_title("G")
+        f.tight_layout()
+        f.savefig("real_vs_decoded.png", dpi=200)
+    
+if __name__ == "__main__":
+    p = argparse.ArgumentParser()
+    p.add_argument("-run_sweep", action="store_true")
+    p.add_argument("-search_size", type=int, default=20)
+    args = p.parse_args()
+    main(args)
 
 
-# res = []
 
-# prev_loss = np.inf
-# bad_epochs = 0
 
-# for epoch in range(EPOCHS):
-#     # Reset the metrics at the start of the next epoch
-#     train_loss.reset_states()
-#     test_loss.reset_states()
 
-#     for images in train_ds:
-#         train_step(images, images)
-#     for images in test_ds:
-#         test_step(images, images)
 
-#     validation_loss = test_loss.result()
-
-#     if validation_loss < prev_loss:
-#         prev_loss = validation_loss
-#         bad_epochs = 0
-#     else:
-#         # count the number of epochs since we decreased the validation loss
-#         if bad_epochs > 5:
-#             break
-#         else:
-#             bad_epochs += 1
-#             prev_loss = validation_loss
-
-#     print(
-#             f'Epoch {epoch + 1}, '
-#             f'Loss: {train_loss.result()}, '
-#             #f'Accuracy: {train_accuracy.result() * 100}, '
-#             f'Test Loss: {validation_loss}, '
-#             #f'Test Accuracy: {test_accuracy.result() * 100}'
-#     )
-#     res.append({"Training loss": train_loss.result(),
-#                 "Validation loss": validation_loss,
-#                 "Epoch": epoch + 1})
-
-# res_df = pd.DataFrame(res)
-
-# f, ax = plt.subplots()
-# ax.plot(res_df["Training loss"], label="Training Loss")
-# ax.plot(res_df["Validation loss"], label="Validation Loss")
-# ax.legend()
-# f.savefig("loss.png", dpi=200)
 
 # # create some new simulated data. we'll use these data to figure out the reconstruction
 # # error of the model on unseen data.
