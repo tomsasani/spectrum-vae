@@ -16,16 +16,12 @@ gen = generator.Generator(
     np.random.randint(1, 2**32),
 )
 
-N = 50_000
+N = 10_000
 
 # simulate a bunch of training examples
-data = gen.simulate_batch(N, root_dist, mutator_threshold=0)
+train = gen.simulate_batch(N, root_dist, mutator_threshold=0)
+test = gen.simulate_batch(N // 5, root_dist, mutator_threshold=0)
 
-DATADIR = "data/images"
+DATADIR = "data"
 
-for i, img in enumerate(data):
-    fh = f"{DATADIR}/{i}.png"
-    arr = img[:, :, 0].astype('uint8')
-    arr *= 255
-    image = Image.fromarray(arr)
-    image.save(fh)
+np.savez(f"{DATADIR}/data.npz", train=train, test=test)
