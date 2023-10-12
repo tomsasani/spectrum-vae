@@ -92,7 +92,10 @@ def train_model_wandb(config=None):
         )
         optimizer = build_optimizer(learning_rate=config.learning_rate)
 
-        loss_object = tf.keras.losses.MeanSquaredError()
+        if config.loss_function == "mse":
+            loss_object = tf.keras.losses.MeanSquaredError()
+        elif config.loss_function == "bce":
+            loss_object = tf.keras.losses.BinaryCrossentropy()
 
         train_loss = tf.keras.metrics.Mean(name='train_loss')
         test_loss = tf.keras.metrics.Mean(name='test_loss')
@@ -124,6 +127,7 @@ def main(args):
         'optimizer': {
             'values': ['adam']
         },
+        'loss_function': {'values': ['mse', 'bce']},
         'initial_filters': {'values': [4, 8, 16, 32]},
         'conv_layers': {'values': [2, 3]},
         'latent_dimensions': {'values': [8, 16, 32, 64]},
@@ -143,7 +147,7 @@ def main(args):
         'batch_size': {
             'values': [32, 64],
         },
-        'epochs': {'value': 10}
+        'epochs': {'value': 5}
     }
 
     sweep_config['parameters'] = parameters_dict
@@ -185,14 +189,16 @@ def main(args):
 
         train_loss = tf.keras.metrics.Mean(name='train_loss')
         test_loss = tf.keras.metrics.Mean(name='test_loss')
-        loss_object = tf.keras.losses.MeanSquaredError()
+        loss_object = tf.keras.losses.BinaryCrossentropy()
 
         res = []
 
         prev_loss = np.inf
         bad_epochs = 0
 
-        for epoch in range(10):
+        EPOCHS = 20
+
+        for epoch in range(EPOCHS):
             # Reset the metrics at the start of the next epoch
             train_loss.reset_states()
             test_loss.reset_states()
