@@ -13,58 +13,68 @@ from tensorflow.keras.models import Model
 
 
 class CAE(Model):
-    def __init__(self, latent_dim: int = 64, kernel_size: int = 5):
+    def __init__(
+        self,
+        initial_filters: int = 8,
+        conv_layers: int = 2,
+        fc_layers: int = 2,
+        latent_dimensions: int = 16,
+        fc_layer_size: int = 64,
+        dropout: float = 0.2,
+    ):
         super(CAE, self).__init__()
-        self.latent_dim = latent_dim
+        self.latent_dim = latent_dimensions
 
-        input_shape = (global_vars.NUM_HAPLOTYPES, global_vars.NUM_SNPS, global_vars.NUM_CHANNELS,)
+        input_shape = (
+            global_vars.NUM_HAPLOTYPES,
+            global_vars.NUM_SNPS,
+            global_vars.NUM_CHANNELS,
+        )
 
-        # [ (W - K + 2P) / S ] + 1
+        # build encoder architecture
+        encoder_ = [layers.Input(shape=input_shape)]
+        conv_filters = initial_filters
+        for _ in range(conv_layers):
+            encoder_.append(layers.Conv2D(conv_filters, (1, 5), activation="relu"))
+            encoder_.append(layers.MaxPooling2D((1, 2)))
+            conv_filters *= 2
+        encoder_.append(layers.Flatten())
+        for _ in range(fc_layers):
+            encoder_.append(layers.Dense(fc_layer_size))
+            encoder_.append(layers.Dropout(dropout))
+        encoder_.append(layers.Dense(latent_dimensions))
 
-        # assuming two convolutional layers of kernel_size
-        first_xdim = (global_vars.NUM_SNPS - kernel_size) + 1
-        #first_xdim = int(( (first_xdim - 2) / 2 ) + 1)
-        second_xdim = ( (first_xdim - kernel_size) ) + 1
-        #second_xdim = int(( (second_xdim - 2) / 2 ) + 1)
+        self.encoder = tf.keras.Sequential(encoder_)
 
-        self.encoder = tf.keras.Sequential([
-            layers.Input(shape=input_shape),
-            #layers.Rescaling(1./255),
-            layers.Conv2D(32, (1, 5), activation='relu'), # output is (100, 32, )
-            layers.MaxPooling2D((1, 2)), # output is (100, 16, )
-            layers.Conv2D(64, (1, 5), activation='relu'), # output is (100, 12, )
-            layers.MaxPooling2D((1, 2)), # output is (100, 6, )
-            layers.Conv2D(128, (1, 5), activation='relu'), # output is (100, 12, )
-            layers.MaxPooling2D((1, 2)), # output is (100, 6, )
-            layers.Flatten(), # output is 100 * 2 * 32
-            layers.Dense(32),
-            layers.Dropout(0.5),
-            layers.Dense(32),
-            layers.Dropout(0.5),
-            layers.Dense(latent_dim),
-        ])
-
-
-        self.decoder = tf.keras.Sequential([
-            layers.Input(shape = (latent_dim, )),
-            layers.Dense(32),
-            layers.Dense(32),
-            layers.Dense(global_vars.NUM_HAPLOTYPES * 1 * 128),
-            layers.Reshape((global_vars.NUM_HAPLOTYPES, 1, 128)),
-            layers.UpSampling2D((1, 2)),
-            layers.Conv2DTranspose(128, (1, 5), activation='relu'),
-            layers.UpSampling2D((1, 2)),
-            layers.Conv2DTranspose(64, (1, 5), activation='relu'),
-            layers.UpSampling2D((1, 2)),
-            layers.Conv2DTranspose(32, (1, 5), activation='relu'),
-            layers.Conv2D(global_vars.NUM_CHANNELS, kernel_size=(1, 1), activation='sigmoid'),
-        ])
+        # build decoder architecture
+        decoder_ = [layers.Input(shape=latent_dimensions)]
+        for _ in range(fc_layers):
+            decoder_.append(layers.Dense(fc_layer_size))
+            # no dropout in decoder
+        # figure out size of encoder output 
+        final_width = global_vars.NUM_SNPS
+        for _ in range(conv_layers):
+            final_width -= 4 # 1 x 5 conv
+            final_width /= 2 # 1 x 2 pool
+        final_width = int(final_width)
+        # figure out final number of conv filters
+        final_filter = initial_filters * (2 ** (conv_layers - 1))
+        decoder_.append(layers.Dense(global_vars.NUM_HAPLOTYPES * final_width * final_filter))
+        decoder_.append(layers.Reshape((global_vars.NUM_HAPLOTYPES, final_width, final_filter)))
+        for _ in range(conv_layers):
+            decoder_.append(layers.UpSampling2D((1, 2)))
+            decoder_.append(layers.Conv2DTranspose(final_filter, (1, 5), activation='relu'))
+            final_filter /= 2
+        #decoder_.append(layers.Conv2DTranspose(final_filter, (1, 5), activation='relu'))
+        decoder_.append(layers.Conv2D(global_vars.NUM_CHANNELS, kernel_size=(1, 1), activation='tanh'))
+        
+        self.decoder = tf.keras.Sequential(decoder_)
 
     def call(self, x):
         encoded = self.encoder(x)
         decoded = self.decoder(encoded)
         return decoded
-    
+
     def build_graph(self, test_shape):
         """This is for testing, based on TF tutorials"""
         nobatch = test_shape[1:]
