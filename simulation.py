@@ -55,7 +55,7 @@ def parameterize_mutation_model(root_dist: np.ndarray, mutator_strength: float =
 
 def simulate_exp(
     params,
-    sample_size,
+    sample_sizes,
     root_dist,
     rng: np.random.default_rng,
     plot: bool = False,
@@ -104,7 +104,7 @@ def simulate_exp(
 
     # sample sample_sizes diploids from the diploid population
     ts = msprime.sim_ancestry(
-        samples=sample_size,
+        samples=sum(sample_sizes),
         demography=demography,
         sequence_length=global_vars.L,
         recombination_rate=params.rho.proposal(rng),
@@ -165,7 +165,7 @@ def simulate_exp(
     return mts
 
 
-def simulate_gough(params, sample_sizes, root_dist, seed, plot: bool = False):
+def simulate_gough(params, sample_sizes, root_dist, rng: np.random.default_rng, plot: bool = False, mutator_threshold: float = 0.05):
     """Note this is a 2 population model"""
     assert len(sample_sizes) == 2
 
@@ -182,34 +182,39 @@ def simulate_gough(params, sample_sizes, root_dist, seed, plot: bool = False):
     # -g = ln(n_bot / size) / t_bot
 
     # g = -1 * ln(n_bot / size) / t_bot
+    seed = rng.integers(1, 2**32)
+
+    N_gough, N_mainland = params.N_gough.proposal(rng), params.N_mainland.proposal(rng)
+    N_colonization, T_colonization = params.N_colonization.proposal(rng), params.T_colonization.proposal(rng)
+    island_migration_rate = params.island_migration_rate.proposal(rng)
 
     # calculate growth rate given colonization Ne and current Ne
-    gough_growth = -1 * np.log(params.N_colonization.value / params.N_gough.value) / params.T_colonization.value
+    gough_growth = -1 * np.log(N_colonization / N_gough) / T_colonization
 
     demography = msprime.Demography()
     # at present moment, gough population which has grown exponentially
     demography.add_population(
         name="gough",
-        initial_size=params.N_gough.value,
+        initial_size=N_gough,
         growth_rate=gough_growth,
     )
     demography.add_population(
         name="mainland",
-        initial_size=params.N_mainland.value,
+        initial_size=N_mainland,
         growth_rate=0,
     )
     demography.add_population(
         name="ancestral",
-        initial_size=params.N_mainland.value,
+        initial_size=N_mainland,
         growth_rate=0,
     )
     demography.set_migration_rate(
         source="gough",
         dest="mainland",
-        rate=params.island_migration_rate.value,
+        rate=island_migration_rate,
     )
     demography.add_population_split(
-        time=params.T_colonization.value,
+        time=T_colonization,
         derived=["gough", "mainland"],
         ancestral="ancestral",
     )
@@ -230,26 +235,64 @@ def simulate_gough(params, sample_sizes, root_dist, seed, plot: bool = False):
     ts = msprime.sim_ancestry(
         #samples=sum(sample_sizes),
         samples=[
-            msprime.SampleSet(sample_sizes[0], population="gough", ploidy=1),
-            msprime.SampleSet(sample_sizes[1], population="mainland", ploidy=1),
+            msprime.SampleSet(sample_sizes[0], population="gough", ploidy=2),
+            msprime.SampleSet(sample_sizes[1], population="mainland", ploidy=2),
         ],
         demography=demography,
         sequence_length=global_vars.L,
-        recombination_rate=params.mouse_rho.value,
+        recombination_rate=params.mouse_rho.proposal(rng),
         discrete_genome=False,  # ensure no multi-allelics
         random_seed=seed,
         ploidy=2,
     )
 
-    # define mutation model
-    mutation_model = parameterize_mutation_model(root_dist)
+    mu = params.mouse_mu.proposal(rng)
 
-    mts = msprime.sim_mutations(
-        ts,
-        rate=params.mouse_mu.value,
-        model=mutation_model,
-        random_seed=seed,
-        discrete_genome=False,
-    )
+    normal_mutation_model = parameterize_mutation_model(root_dist)
+
+    # figure out if we are going to augment the mutation rate
+    # in this simulation with a local mutator allele
+    mutator_prob = params.mutator_prob.proposal(rng)
+    if mutator_prob <= mutator_threshold:
+        mu_effect_size = params.mutator_effect_size.proposal(rng)
+        
+        # then, define the period of time in which the mutator should be active
+        mu_emergence = params.mutator_emergence.proposal(rng)
+
+        # define mutation model
+        mutator_mutation_model = parameterize_mutation_model(
+            root_dist,
+            mutator_strength=mu * mu_effect_size,
+        )
+
+        # simulate at a low rate before the emergence
+        # across the whole region
+        mts = msprime.sim_mutations(
+            ts,
+            rate=mu,
+            model=mutator_mutation_model,
+            #start_time=mu_emergence,
+            random_seed=seed,
+            discrete_genome=False,
+        )
+        # and a higher rate afterward
+        # mts = msprime.sim_mutations(
+        #     mts,
+        #     rate=mu,
+        #     model=mutator_mutation_model,
+        #     end_time=mu_emergence,
+        #     random_seed=seed,
+        #     discrete_genome=False,
+        # )
+
+    else:
+        # otherwise, simulate constant mutation rate across the region for all time
+        mts = msprime.sim_mutations(
+            ts,
+            rate=mu,
+            model=normal_mutation_model,
+            random_seed=seed,
+            discrete_genome=False,
+        )
 
     return mts

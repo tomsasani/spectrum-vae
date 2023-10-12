@@ -50,3 +50,13 @@ class ParamSet:
         self.mutator_emergence = Parameter(1, 3500, "mu_emergence")
         # self.mutator_start = Parameter(1, global_vars.L, "mu_start")
         # self.mutator_length = Parameter(10_000, 10_000, "mu_length")
+
+        self.N_gough = Parameter(20_000, 20_000, "N_gough")
+        self.N_mainland = Parameter(50_000, 50_000, "N_mainland")
+        self.T_colonization = Parameter(100, 100, "T_colonization")
+        self.N_colonization = Parameter(1_000, 1_000, "N_colonization")
+        self.T_mainland_bottleneck = Parameter(10_000, 10_000, "T_mainland_bottleneck")
+        self.D_mainland_bottleneck = Parameter(6e-4, 6e-4, "D_mainland_bottleneck")
+        self.island_migration_rate = Parameter(8e-4, 8e-4, "island_migration_rate")
+        self.mouse_mu = Parameter(6.5e-9, 6.5e-9, "mouse_mu")
+        self.mouse_rho = Parameter(1e-8, 1e-8, "mouse_rho")
