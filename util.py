@@ -121,7 +121,7 @@ def process_region(
     X = np.transpose(X, (1, 0, 2))
 
     # sum across channels
-    # X = np.expand_dims(np.sum(X, axis=2), axis=2)
+    #X = np.expand_dims(np.sum(X, axis=2), axis=2)
 
     # if we have more than the necessary number of SNPs
     if mid >= half_S:
@@ -147,6 +147,7 @@ def process_region(
         distances_tiled = np.tile(distances, (n_haps, 1))
         # add final channel of inter-snp distances
         #region[:, i:j, -1] = distances_tiled
+
 
     return region
 

@@ -102,12 +102,6 @@ def prep_simulated_region(ts) -> np.ndarray:
     positions = site_table.position.astype(np.int64)
     assert positions.shape[0] == X.shape[0]
 
-    # seg = util.find_segregating_idxs(X)
-    # if seg.shape[0] < X.shape[0]:
-    #     print (f"{seg.shape[0] / X.shape[0]} segregating sites in simulated data")
-    #X_filtered = X[seg, :]
-
-    #filtered_positions = positions[seg]
     return X, positions
 
 # testing
