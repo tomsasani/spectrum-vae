@@ -33,13 +33,13 @@ def compute_loss(model, x):
 
 ### BUILD MODEL
 def build_model(
-    initial_filters: int = 8,
-    conv_layers: int = 2,
-    conv_layer_multiplier: int = 2,
-    #latent_dimensions: int = 8,
-    #fc_layers: int = 0,
-    #fc_layer_size: int = 32,
-    #dropout: float = 0.5,
+    # initial_filters: int = 8,
+    # conv_layers: int = 2,
+    # conv_layer_multiplier: int = 2,
+    latent_dimensions: int = 8,
+    fc_layers: int = 0,
+    fc_layer_size: int = 32,
+    dropout: float = 0.5,
     apply_nin: bool = False,
     nin_filters: int = 32,
     activation: str = "elu",
@@ -47,14 +47,14 @@ def build_model(
 ):
 
 
-    model = autoencoder.CAE(
-        initial_filters=initial_filters,
-        conv_layers=conv_layers,
-        conv_layer_multiplier=conv_layer_multiplier,
-        #latent_dimensions=latent_dimensions,
-        #fc_layers=fc_layers,
-        #fc_layer_size=fc_layer_size,
-        #dropout=dropout,
+    model = autoencoder.AESimple(
+        # initial_filters=initial_filters,
+        # conv_layers=conv_layers,
+        # conv_layer_multiplier=conv_layer_multiplier,
+        latent_dimensions=latent_dimensions,
+        fc_layers=fc_layers,
+        fc_layer_size=fc_layer_size,
+        dropout=dropout,
         apply_nin=apply_nin,
         nin_filters=nin_filters,
         activation=activation,
@@ -62,7 +62,7 @@ def build_model(
     )
     model.build_graph((
         1,
-        44,
+        1,
         global_vars.NUM_SNPS,
         global_vars.NUM_CHANNELS,
     ))
@@ -266,14 +266,14 @@ def main(args):
             sort=False,
         )
         model = build_model(
-            conv_layers=3,
-            conv_layer_multiplier=1,
-            initial_filters=8,
-            #fc_layers=0,
-            #latent_dimensions=128,
-            #dropout=0.5,
-            #fc_layer_size=64,
-            apply_nin=True,
+            # conv_layers=3,
+            # conv_layer_multiplier=1,
+            # initial_filters=8,
+            fc_layers=3,
+            latent_dimensions=8,
+            dropout=0.5,
+            fc_layer_size=128,
+            apply_nin=False,
             nin_filters=16,
             activation='elu',
             #kernel_size=5,
@@ -333,12 +333,12 @@ def main(args):
 
         root_dist = np.array([0.25, 0.25, 0.25, 0.25])
 
-        sim = simulation.simulate_gough
+        sim = simulation.simulate_exp
 
         # first, initialize generator object
         gen = generator.Generator(
             sim,
-            [14, 8],
+            [global_vars.NUM_HAPLOTYPES],
             np.random.randint(1, 2**32),
         )
 

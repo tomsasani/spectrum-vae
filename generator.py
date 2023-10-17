@@ -34,7 +34,7 @@ class Generator:
         regions = np.zeros(
             (
                 batch_size,
-                sum(self.sample_sizes) * 2,
+                1,
                 global_vars.NUM_SNPS,
                 global_vars.NUM_CHANNELS,
             ),

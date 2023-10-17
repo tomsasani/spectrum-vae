@@ -148,6 +148,8 @@ def process_region(
         # add final channel of inter-snp distances
         #region[:, i:j, -1] = distances_tiled
 
+    rand_idx = np.random.randint(n_haps)
+    region = np.expand_dims(region[rand_idx, :, :], axis=0)
 
     return region
 

@@ -14,7 +14,7 @@ N = 1_000
 # first, initialize generator object
 gen = generator.Generator(
     sim,
-    [50],
+    [global_vars.NUM_HAPLOTYPES],
     np.random.randint(1, 2**32),
 )
 

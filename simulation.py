@@ -104,7 +104,7 @@ def simulate_exp(
 
     # sample sample_sizes diploids from the diploid population
     ts = msprime.sim_ancestry(
-        samples=[msprime.SampleSet(sample_sizes[0], population="A", ploidy=2)],
+        samples=[msprime.SampleSet(sample_sizes[0], population="A", ploidy=1)],
         demography=demography,
         sequence_length=global_vars.L,
         recombination_rate=params.rho.proposal(rng),

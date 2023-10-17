@@ -1,8 +1,8 @@
 '''For collecting global values'''
 # section A: general -----------------------------------------------------------
-NUM_SNPS = 36 * 1      # number of seg sites, should be divisible by 4
-L = 50_000
-NUM_HAPLOTYPES = 50
+NUM_SNPS = 36 * 4      # number of seg sites, should be divisible by 4
+L = 200_000
+NUM_HAPLOTYPES = 198
 NUM_CHANNELS = 6
 
 DEFAULT_SEED = 1833
