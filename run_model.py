@@ -12,45 +12,57 @@ import tensorflow as tf
 import pandas as pd
 import wandb
 import argparse
+import sklearn
+
+def log_normal_pdf(sample, mean, logvar, raxis=1):
+    log2pi = tf.math.log(2. * np.pi)
+    return tf.reduce_sum(
+        -.5 * ((sample - mean) ** 2. * tf.exp(-logvar) + logvar + log2pi),
+        axis=raxis)
 
 
+def compute_loss(model, x):
+    mean, logvar = model.encode(x)
+    z = model.reparameterize(mean, logvar)
+    x_logit = model.decode(z)
+    cross_ent = tf.nn.sigmoid_cross_entropy_with_logits(logits=x_logit, labels=x)
+    logpx_z = -tf.reduce_sum(cross_ent, axis=[1, 2, 3])
+    logpz = log_normal_pdf(z, 0., 0.)
+    logqz_x = log_normal_pdf(z, mean, logvar)
+    return -tf.reduce_mean(logpx_z + logpz - logqz_x)
 
 ### BUILD MODEL
 def build_model(
     initial_filters: int = 8,
     conv_layers: int = 2,
     conv_layer_multiplier: int = 2,
-    latent_dimensions: int = 8,
-    fc_layers: int = 0,
-    fc_layer_size: int = 32,
-    dropout: float = 0.5,
+    #latent_dimensions: int = 8,
+    #fc_layers: int = 0,
+    #fc_layer_size: int = 32,
+    #dropout: float = 0.5,
     apply_nin: bool = False,
+    nin_filters: int = 32,
     activation: str = "elu",
-    #activation_slope: float = 0.5,
+    #kernel_size: int = 5,
 ):
 
-    # activation_func = None
-    # if activation == "relu":
-    #     activation_func = tf.keras.activations.relu()
-    # elif activation == "elu":
-    #     activation_func = tf.keras.activations.elu()
-    # elif activation == "leaky_relu":
-    #     activation_func = tf.keras.activations.relu(alpha=activation_slope)
 
     model = autoencoder.CAE(
         initial_filters=initial_filters,
         conv_layers=conv_layers,
         conv_layer_multiplier=conv_layer_multiplier,
-        latent_dimensions=latent_dimensions,
-        fc_layers=fc_layers,
-        fc_layer_size=fc_layer_size,
-        dropout=dropout,
+        #latent_dimensions=latent_dimensions,
+        #fc_layers=fc_layers,
+        #fc_layer_size=fc_layer_size,
+        #dropout=dropout,
         apply_nin=apply_nin,
+        nin_filters=nin_filters,
         activation=activation,
+        #kernel_size=kernel_size,
     )
     model.build_graph((
         1,
-        global_vars.NUM_HAPLOTYPES,
+        44,
         global_vars.NUM_SNPS,
         global_vars.NUM_CHANNELS,
     ))
@@ -83,16 +95,16 @@ def sort_batch(batch: np.ndarray):
         sorted_batch[batch_i] = arr[sorted_idxs, :, :]
     return sorted_batch
 
-def build_data(batch_size: int = 32, sort: bool = False):
+
+def build_data(batch_size: int = 32, sort: bool = True):
     train_data, test_data = None, None
     with np.load("data/data.npz") as data:
         train_data = data["train"]
         test_data = data["test"]
-        #print (test_data, test_data.shape)
         if sort:
+            print ("SORTING")
             train_data = sort_batch(train_data)
             test_data = sort_batch(test_data)
-            #print (test_data, test_data.shape)
 
     train_ds = tf.data.Dataset.from_tensor_slices(train_data).batch(batch_size)
     test_ds = tf.data.Dataset.from_tensor_slices(test_data).batch(batch_size)
@@ -128,20 +140,22 @@ def train_model_wandb(config=None):
             batch_size=config.batch_size,
         )
         model = build_model(
-            initial_filters=config.initial_filters,
             conv_layers=config.conv_layers,
             conv_layer_multiplier=config.conv_layer_multiplier,
-            latent_dimensions=config.latent_dimensions,
-            fc_layers=config.fc_layers,
-            fc_layer_size=config.fc_layer_size,
-            dropout=config.dropout,
+            initial_filters=config.initial_filters,
+            # latent_dimensions=config.latent_dimensions,
+            #fc_layers=config.fc_layers,
+            #fc_layer_size=config.fc_layer_size,
+            #dropout=config.dropout,
             apply_nin=config.apply_nin,
+            nin_filters=config.nin_filters,
             activation=config.activation,
+            #kernel_size=config.kernel_size,
         )
         optimizer = build_optimizer(
             learning_rate=config.learning_rate,
-            decay_rate=config.decay_rate,
-            decay_steps=config.decay_steps,
+            #decay_rate=config.decay_rate,
+            #decay_steps=config.decay_steps,
         )
 
         loss_object = tf.keras.losses.MeanSquaredError()
@@ -179,8 +193,11 @@ def main(args):
         'apply_nin': {
             'values': [True, False]
         },
+        'nin_filters': {
+            'values': [16, 32]
+        },
         'initial_filters': {
-            'values': [4, 8, 16, 32]
+            'values': [8, 16, 32]
         },
         'conv_layers': {
             'values': [3]
@@ -188,37 +205,35 @@ def main(args):
         'conv_layer_multiplier': {
             'values': [1, 2]
         },
-        'latent_dimensions': {
-            'values': [8, 16, 32, 64]
-        },
-        'fc_layers': {
-            'values': [2]
-        },
-        'fc_layer_size': {
-            'values': [16, 32, 64, 128]
-        },
-        'dropout': {
-            'values': [0.1, 0.2, 0.3, 0.4, 0.5]
-        },
+        # 'latent_dimensions': {
+        #     'values': [4, 8, 16, 32, 64]
+        # },
+        # 'fc_layers': {
+        #     'values': [1, 2, 3, 4]
+        # },
+        # 'fc_layer_size': {
+        #     'values': [16, 32, 64, 128]
+        # },
+        # 'dropout': {
+        #     'values': [0.1, 0.2, 0.3, 0.4, 0.5]
+        # },
         'activation': {
             'values': ['elu', 'relu']
         },
         'learning_rate': {
-            'distribution': 'uniform',
-            'min': 0,
-            'max': 1e-3,
+            'values': [1e-4, 5e-4, 1e-3, 5e-3]
         },
-        'decay_rate': {
-            'values': [0.92, 0.94, 0.96, 0.98]
-        },
-        'decay_steps': {
-            'values': [10, 20, 30]
-        },
+        # 'decay_rate': {
+        #     'values': [0.92, 0.94, 0.96, 0.98]
+        # },
+        # 'decay_steps': {
+        #     'values': [10]
+        # },
         'batch_size': {
-            'values': [16, 32, 64],
+            'values': [8, 16, 32],
         },
-        # 'sort_by_similarity': {
-        #     'values': [True, False]
+        # 'kernel_size': {
+        #     'values': [5, 7]
         # },
         'epochs': {
             'value': 10
@@ -227,53 +242,43 @@ def main(args):
 
     sweep_config['parameters'] = parameters_dict
 
-    with np.load("data/data.npz") as data:
-        train_data = data["train"]
-        test_data = data["test"]
-
-    f, ax = plt.subplots()
-    n = 2
-    to_plot = np.arange(n)
-    f, axarr = plt.subplots(global_vars.NUM_CHANNELS, n * 2, figsize=(12, n * global_vars.NUM_CHANNELS))
-    for channel_i in np.arange(global_vars.NUM_CHANNELS):
-        for idx, plot_i in enumerate(to_plot):
-            sns.heatmap(
-                train_data[plot_i, :, :, channel_i],
-                ax=axarr[channel_i, idx * 2],
-                cbar=False,
-            )
-            sns.heatmap(
-                test_data[plot_i, :, :, channel_i],
-                ax=axarr[channel_i, (idx * 2) + 1],
-                cbar=False,
-            )
-    # for idx in range(n):
-    #     axarr[idx * 2].set_title("R")
-    #     axarr[(idx * 2) + 1].set_title("G")
-    f.tight_layout()
-    f.savefig("training.png", dpi=200)
 
     if args.run_sweep:
         sweep_id = wandb.sweep(sweep_config, project="sweeps-demo")
         wandb.agent(sweep_id, train_model_wandb, count=args.search_size)
 
     else:
+
+        with np.load("data/data.npz") as data:
+            train_data = data["train"]
+            test_data = data["test"]
+
+
+        f, axarr = plt.subplots(global_vars.NUM_CHANNELS, 1, figsize=(12, global_vars.NUM_CHANNELS * 2))
+        hap = train_data[0, :, :, :]
+        for channel_i in np.arange(global_vars.NUM_CHANNELS):
+            sns.heatmap(hap[:, :, channel_i], ax=axarr[channel_i], cbar=True)
+        f.tight_layout()
+        f.savefig("training.png", dpi=200)
+
         train_ds, test_ds = build_data(
-            batch_size=32,
+            batch_size=8,
             sort=False,
         )
         model = build_model(
             conv_layers=3,
-            conv_layer_multiplier=2,
-            fc_layers=2,
-            latent_dimensions=128,
-            dropout=0.5,
-            fc_layer_size=32,
-            initial_filters=32,
+            conv_layer_multiplier=1,
+            initial_filters=8,
+            #fc_layers=0,
+            #latent_dimensions=128,
+            #dropout=0.5,
+            #fc_layer_size=64,
             apply_nin=True,
-            activation='gelu',
+            nin_filters=16,
+            activation='elu',
+            #kernel_size=5,
         )
-        optimizer = build_optimizer(learning_rate=1e-3)
+        optimizer = build_optimizer(learning_rate=5e-3)
 
         train_loss = tf.keras.metrics.Mean(name='train_loss')
         test_loss = tf.keras.metrics.Mean(name='test_loss')
@@ -328,33 +333,32 @@ def main(args):
 
         root_dist = np.array([0.25, 0.25, 0.25, 0.25])
 
-        sim = simulation.simulate_exp
+        sim = simulation.simulate_gough
 
         # first, initialize generator object
         gen = generator.Generator(
             sim,
-            [25],
+            [14, 8],
             np.random.randint(1, 2**32),
         )
 
-        # simulate a bunch of training examples
-        normal_data = gen.simulate_batch(1000, root_dist, mutator_threshold=0)
-        mutator_data = gen.simulate_batch(1000, root_dist, mutator_threshold=1)
+        N_ROC = 1_000
 
+        # simulate a bunch of training examples
+        normal_data = gen.simulate_batch(N_ROC, root_dist, mutator_threshold=0)
+        mutator_data = gen.simulate_batch(N_ROC, root_dist, mutator_threshold=1)
+
+        #normal_data_split = np.concatenate(np.split(normal_data, global_vars.NUM_HAPLOTYPES, axis=1))
+        #mutator_data_split = np.concatenate(np.split(mutator_data, global_vars.NUM_HAPLOTYPES, axis=1))
+        # to_predict = np.expand_dims(normal_data[:, 0, :, :], axis=0)
         encoded_data = model.encoder(normal_data).numpy()
         decoded_data = model.decoder(encoded_data).numpy()
 
-        f, ax = plt.subplots()
-        n = 2
-        to_plot = np.arange(n)
-        f, axarr = plt.subplots(global_vars.NUM_CHANNELS, n * 2, figsize=(8, n * global_vars.NUM_CHANNELS))
+        f, axarr = plt.subplots(global_vars.NUM_CHANNELS, 2, figsize=(16, global_vars.NUM_CHANNELS * 2))
         for channel_i in np.arange(global_vars.NUM_CHANNELS):
-            for idx, plot_i in enumerate(to_plot):
-                sns.heatmap(normal_data[plot_i, :, :, channel_i], ax=axarr[channel_i, idx * 2], cbar=False)
-                sns.heatmap(decoded_data[plot_i, :, :, channel_i], ax=axarr[channel_i, (idx * 2) + 1], cbar=False)
-        # for idx in range(n):
-        #     axarr[idx * 2].set_title("R")
-        #     axarr[(idx * 2) + 1].set_title("G")
+            sns.heatmap(normal_data[0, :, :, channel_i], ax=axarr[channel_i, 0], cbar=True)
+            sns.heatmap(decoded_data[0, :, :, channel_i], ax=axarr[channel_i, 1], cbar=True)
+
         f.tight_layout()
         f.savefig("real_vs_decoded.png", dpi=200)
 
@@ -367,12 +371,25 @@ def main(args):
         min_loss = np.min([np.min(normal_loss), np.min(mutator_loss)])
 
         bins = np.linspace(min_loss, max_loss, num=50)
-        f, ax = plt.subplots()
-        ax.hist(normal_loss, bins=bins, alpha=0.25, label="Normal")
-        ax.hist(mutator_loss, bins=bins, alpha=0.25, label="Mutator")
-        ax.legend()
-        ax.set_xlabel("Loss")
-        ax.set_ylabel("No of examples")
+        f, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+        ax1.hist(normal_loss, bins=bins, alpha=0.25, label="Normal")
+        ax1.hist(mutator_loss, bins=bins, alpha=0.25, label="Mutator")
+        ax1.legend()
+        ax1.set_xlabel("Loss")
+        ax1.set_ylabel("No of examples")
+
+        y_true = [1] * N_ROC
+        y_true += [0] * N_ROC
+        y_pred = np.concatenate((normal_loss, mutator_loss))
+        fpr, tpr, thresholds = sklearn.metrics.roc_curve(np.array(y_true), y_pred)
+        ax2.plot(fpr, tpr)
+
+        # lims = [
+        #     np.min([ax2.get_xlim(), ax2.get_ylim()]),  # min of both axes
+        #     np.max([ax2.get_xlim(), ax2.get_ylim()]),  # max of both axes
+        # ]
+        ax2.plot([0, 1], [0, 1], c="k", ls=":")
+
         f.savefig("recon_loss.png", dpi=200)
 
 if __name__ == "__main__":
