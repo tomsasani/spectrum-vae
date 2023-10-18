@@ -122,42 +122,58 @@ def simulate_exp(
     mutator_prob = params.mutator_prob.proposal(rng)
     if mutator_prob <= mutator_threshold:
         mu_effect_size = params.mutator_effect_size.proposal(rng)
-        
+
         # then, define the period of time in which the mutator should be active
         mu_emergence = params.mutator_emergence.proposal(rng)
 
         # define mutation model
-        mutator_mutation_model = parameterize_mutation_model(
-            root_dist,
-            mutator_strength=mu * mu_effect_size,
-        )
+        # mutator_mutation_model = parameterize_mutation_model(
+        #     root_dist,
+        #     mutator_strength=mu * mu_effect_size,
+        # )
+
 
         # simulate at a low rate before the emergence
         # across the whole region
         mts = msprime.sim_mutations(
             ts,
             rate=mu,
-            model=mutator_mutation_model,
-            #start_time=mu_emergence,
+            #model=normal_mutation_model,
+            start_time=mu_emergence,
             random_seed=seed,
             discrete_genome=False,
         )
         # and a higher rate afterward
-        # mts = msprime.sim_mutations(
-        #     mts,
-        #     rate=mu,
-        #     model=mutator_mutation_model,
-        #     end_time=mu_emergence,
-        #     random_seed=seed,
-        #     discrete_genome=False,
-        # )
+        # define RateMap so that mutator is only active in small region
+        mu_start_pos = params.mutator_start.proposal(rng)
+        mu_length = params.mutator_length.proposal(rng)
+        # chunks corresponding to mutator activity regions
+        position_list = [
+            0,
+            mu_start_pos,
+            mu_start_pos + mu_length,
+            global_vars.L,
+        ]
+        # normal rate map
+        rate_map = msprime.RateMap(
+            position=position_list,
+            rate=[mu, mu * mu_effect_size, mu],
+        )
+        mts = msprime.sim_mutations(
+            mts,
+            rate=rate_map,
+            #model=normal_mutation_model,
+            end_time=mu_emergence,
+            random_seed=seed,
+            discrete_genome=False,
+        )
 
     else:
         # otherwise, simulate constant mutation rate across the region for all time
         mts = msprime.sim_mutations(
             ts,
             rate=mu,
-            model=normal_mutation_model,
+            #model=normal_mutation_model,
             random_seed=seed,
             discrete_genome=False,
         )
@@ -255,7 +271,7 @@ def simulate_gough(params, sample_sizes, root_dist, rng: np.random.default_rng, 
     mutator_prob = params.mutator_prob.proposal(rng)
     if mutator_prob <= mutator_threshold:
         mu_effect_size = params.mutator_effect_size.proposal(rng)
-        
+
         # then, define the period of time in which the mutator should be active
         mu_emergence = params.mutator_emergence.proposal(rng)
 
@@ -270,20 +286,20 @@ def simulate_gough(params, sample_sizes, root_dist, rng: np.random.default_rng, 
         mts = msprime.sim_mutations(
             ts,
             rate=mu,
-            model=mutator_mutation_model,
-            #start_time=mu_emergence,
+            model=normal_mutation_model,
+            start_time=mu_emergence,
             random_seed=seed,
             discrete_genome=False,
         )
         # and a higher rate afterward
-        # mts = msprime.sim_mutations(
-        #     mts,
-        #     rate=mu,
-        #     model=mutator_mutation_model,
-        #     end_time=mu_emergence,
-        #     random_seed=seed,
-        #     discrete_genome=False,
-        # )
+        mts = msprime.sim_mutations(
+            mts,
+            rate=mu,# * mu_effect_size,
+            model=mutator_mutation_model,
+            end_time=mu_emergence,
+            random_seed=seed,
+            discrete_genome=False,
+        )
 
     else:
         # otherwise, simulate constant mutation rate across the region for all time

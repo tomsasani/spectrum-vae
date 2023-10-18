@@ -18,19 +18,19 @@ class CAE(Model):
         initial_filters: int = 8,
         conv_layers: int = 2,
         conv_layer_multiplier: int = 2,
-        #fc_layers: int = 2,
-        latent_dimensions: int = 16,
-        #fc_layer_size: int = 64,
-        #dropout: float = 0.2,
+        fc_layers: int = 2,
+        #latent_dimensions: int = 16,
+        fc_layer_size: int = 64,
+        dropout: float = 0.2,
         apply_nin: bool = False,
         nin_filters: int = 16,
         activation: str = "elu",
     ):
         super(CAE, self).__init__()
-        self.latent_dim = latent_dimensions
+        #self.latent_dim = latent_dimensions
 
         input_shape = (
-            44,
+            global_vars.NUM_HAPLOTYPES,
             global_vars.NUM_SNPS,
             global_vars.NUM_CHANNELS,
         )
@@ -50,14 +50,11 @@ class CAE(Model):
             encoder_.append(layers.Conv2D(nin_filters, (1, 1), activation=activation))
 
         # flatten the multidimensional array
-        # encoder_.append(layers.Flatten())
+        #encoder_.append(layers.Flatten())
         # create fully-connected layers if desired
-        # for _ in range(fc_layers):
-        #     encoder_.append(layers.Dense(fc_layer_size, activation=activation))
-        #     encoder_.append(layers.Dropout(dropout))
-
-        # encode down into smaller number of latent dimensions
-        # encoder_.append(layers.Dense(latent_dimensions, activation=activation))
+        for _ in range(fc_layers):
+            encoder_.append(layers.Dense(fc_layer_size, activation=activation))
+            encoder_.append(layers.Dropout(dropout))
 
         self.encoder = tf.keras.Sequential(encoder_)
 
@@ -68,8 +65,6 @@ class CAE(Model):
 
         # build decoder architecture
         decoder_ = []
-        # if latent_dimensions > 0:
-        #     decoder_.append(layers.Input(shape=latent_dimensions))
 
         if apply_nin:
             decoder_.append(layers.Conv2D(conv_filters, (1, 1), activation=activation))
@@ -86,32 +81,6 @@ class CAE(Model):
         final_width = int(final_width)
         # figure out final number of conv filters
         final_filter = int(conv_filters / conv_layer_multiplier)
-
-        # if apply_nin:
-        #     decoder_.append(
-        #         layers.Dense(
-        #             global_vars.NUM_HAPLOTYPES * final_width * nin_filters,
-        #             activation=activation,
-        #         ))
-        #     decoder_.append(
-        #         layers.Reshape((
-        #             global_vars.NUM_HAPLOTYPES,
-        #             final_width,
-        #             nin_filters,
-        #         )))
-        #     decoder_.append(layers.Conv2D(conv_filters, (1, 1), activation=activation))
-        # else:
-        #     decoder_.append(
-        #         layers.Dense(
-        #             global_vars.NUM_HAPLOTYPES * final_width * conv_filters,
-        #             activation=activation,
-        #         ))
-        #     decoder_.append(
-        #         layers.Reshape((
-        #             global_vars.NUM_HAPLOTYPES,
-        #             final_width,
-        #             conv_filters,
-        #         )))
 
 
         for _ in range(conv_layers - 1):
@@ -153,20 +122,17 @@ class CAE2(Model):
         initial_filters: int = 8,
         conv_layers: int = 2,
         conv_layer_multiplier: int = 2,
-        fc_layers: int = 2,
-        latent_dimensions: int = 16,
-        fc_layer_size: int = 64,
-        dropout: float = 0.2,
-        apply_nin: bool = False,
-        nin_filters: int = 16,
         activation: str = "elu",
         kernel_size: int = 5,
+        fc_layers: int = 2,
+        fc_layer_size: int = 64,
+        dropout: float = 0.5,
+        latent_dimensions: int = 2,
     ):
         super(CAE2, self).__init__()
-        self.latent_dim = latent_dimensions
 
         input_shape = (
-            44,
+            global_vars.NUM_HAPLOTYPES,
             global_vars.NUM_SNPS,
             global_vars.NUM_CHANNELS,
         )
@@ -177,25 +143,18 @@ class CAE2(Model):
         # convolution layers, without max pooling in between
         for _ in range(conv_layers):
             encoder_.append(layers.Conv2D(conv_filters, (1, kernel_size), activation=activation))
-            #encoder_.append(layers.MaxPooling2D((1, 2)))
             conv_filters *= conv_layer_multiplier
 
         # apply max pooling
         encoder_.append(layers.MaxPooling2D((1, 2)))
 
-        # if we want to apply a NiN layer, do so after all of the convolutional and max pooling layers.
-        # we'll always use the NiN to reduce dimensionality
-        if apply_nin:
-            encoder_.append(layers.Conv2D(nin_filters, (1, 1), activation=activation))
-
-        # flatten the multidimensional array
+        # apply final convolutional layer
+        encoder_.append(layers.Conv2D(conv_filters, (1, kernel_size), activation=activation))
+        # flatten and dense
         encoder_.append(layers.Flatten())
-        # create fully-connected layers if desired
-        for _ in range(fc_layers):
+        for fc_layer in range(fc_layers):
             encoder_.append(layers.Dense(fc_layer_size, activation=activation))
             encoder_.append(layers.Dropout(dropout))
-
-        # encode down into smaller number of latent dimensions
         encoder_.append(layers.Dense(latent_dimensions, activation=activation))
 
         self.encoder = tf.keras.Sequential(encoder_)
@@ -208,44 +167,35 @@ class CAE2(Model):
         # build decoder architecture
         decoder_ = [layers.Input(shape=latent_dimensions)]
 
-        # create dense fully-connected layers
-        for _ in range(fc_layers):
+        for fc_layer in range(fc_layers):
             decoder_.append(layers.Dense(fc_layer_size, activation=activation))
+
         # figure out size of encoder output
         final_width = global_vars.NUM_SNPS
         for _ in range(conv_layers):
             final_width -= (kernel_size - 1) # 1 x 5 conv
         final_width /= 2 # 1 x 2 pool
+        # one more convolution
+        final_width -= (kernel_size - 1)
         final_width = int(final_width)
         # figure out final number of conv filters
         final_filter = int(conv_filters / conv_layer_multiplier)
 
-        if apply_nin:
-            decoder_.append(
-                layers.Dense(
-                    global_vars.NUM_HAPLOTYPES * final_width * nin_filters,
-                    activation=activation,
-                ))
-            decoder_.append(
-                layers.Reshape((
-                    global_vars.NUM_HAPLOTYPES,
-                    final_width,
-                    nin_filters,
-                )))
-            decoder_.append(layers.Conv2D(conv_filters, (1, 1), activation=activation))
-        else:
-            decoder_.append(
+        decoder_.append(
                 layers.Dense(
                     global_vars.NUM_HAPLOTYPES * final_width * conv_filters,
                     activation=activation,
                 ))
-            decoder_.append(
+        decoder_.append(
                 layers.Reshape((
                     global_vars.NUM_HAPLOTYPES,
                     final_width,
                     conv_filters,
                 )))
 
+
+        decoder_.append(layers.Conv2DTranspose(final_filter, (1, kernel_size), activation=activation))
+        final_filter /= conv_layer_multiplier
         decoder_.append(layers.UpSampling2D((1, 2)))
         for _ in range(conv_layers - 1):
             #decoder_.append(layers.UpSampling2D((1, 2)))
@@ -253,6 +203,110 @@ class CAE2(Model):
             final_filter /= conv_layer_multiplier
         # final upsampling and Conv2D layers
         #decoder_.append(layers.UpSampling2D((1, 2)))
+        decoder_.append(
+            layers.Conv2DTranspose(
+                global_vars.NUM_CHANNELS,
+                kernel_size=(1, kernel_size),
+                activation='tanh',
+            ))
+
+        self.decoder = tf.keras.Sequential(decoder_)
+
+    def call(self, x):
+        encoded = self.encoder(x)
+        decoded = self.decoder(encoded)
+        return decoded
+
+    def build_graph(self, test_shape):
+        """This is for testing, based on TF tutorials"""
+        nobatch = test_shape[1:]
+        self.build(test_shape) # make sure to call on shape with batch
+        gt_inputs = tf.keras.Input(shape=nobatch)
+
+        if not hasattr(self, 'call'):
+            raise AttributeError("User should define 'call' method!")
+
+        _ = self.call(gt_inputs)
+
+class CAESimple(Model):
+    def __init__(
+        self,
+        initial_filters: int = 8,
+        conv_layer_multiplier: int = 2,
+        conv_layers: int = 3,
+        activation: str = "elu",
+        kernel_size: int = 5,
+        fc_layers: int = 2,
+        fc_layer_size: int = 64,
+        dropout: float = 0.5,
+        latent_dimensions: int = 2,
+    ):
+        super(CAESimple, self).__init__()
+
+        input_shape = (
+            global_vars.NUM_HAPLOTYPES,
+            global_vars.NUM_SNPS,
+            global_vars.NUM_CHANNELS,
+        )
+
+        # build encoder architecture
+        encoder_ = [layers.Input(shape=input_shape)]
+        filter_size = 8
+        input_width = input_shape[1]
+        # convolution layers, without max pooling in between
+        for _ in range(conv_layers):
+            encoder_.append(
+                layers.Conv2D(
+                    filter_size,
+                    (1, kernel_size),
+                    activation=activation,
+                ))
+            input_width -= (kernel_size - 1)
+            encoder_.append(layers.MaxPooling2D((1, 2)))
+            input_width /= 2
+
+        input_width = int(input_width)
+
+        encoder_.append(layers.Flatten())
+
+        for fc_layer in range(fc_layers):
+            encoder_.append(layers.Dense(fc_layer_size, activation=activation))
+            encoder_.append(layers.Dropout(dropout))
+
+        encoder_.append(layers.Dense(latent_dimensions, activation=activation))
+
+        self.encoder = tf.keras.Sequential(encoder_)
+
+        # build decoder architecture
+        decoder_ = [layers.Input(shape=latent_dimensions)]
+        
+        for fc_layer in range(fc_layers):
+            decoder_.append(layers.Dense(fc_layer_size, activation=activation))
+        
+        # reshape
+        decoder_.append(
+                layers.Dense(
+                    global_vars.NUM_HAPLOTYPES * input_width * filter_size,
+                    activation=activation,
+                ))
+        decoder_.append(
+                layers.Reshape((
+                    global_vars.NUM_HAPLOTYPES,
+                    input_width,
+                    filter_size,
+                )))
+
+        decoder_.append(layers.UpSampling2D((1, 2)))
+
+        for _ in range(conv_layers - 1):
+            decoder_.append(
+                layers.Conv2DTranspose(
+                    filter_size,
+                    (1, kernel_size),
+                    activation=activation,
+                ))
+            decoder_.append(layers.UpSampling2D((1, 2)))
+        
         decoder_.append(
             layers.Conv2DTranspose(
                 global_vars.NUM_CHANNELS,

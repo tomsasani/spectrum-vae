@@ -13,56 +13,36 @@ import pandas as pd
 import wandb
 import argparse
 import sklearn
+import tqdm
 
-def log_normal_pdf(sample, mean, logvar, raxis=1):
-    log2pi = tf.math.log(2. * np.pi)
-    return tf.reduce_sum(
-        -.5 * ((sample - mean) ** 2. * tf.exp(-logvar) + logvar + log2pi),
-        axis=raxis)
-
-
-def compute_loss(model, x):
-    mean, logvar = model.encode(x)
-    z = model.reparameterize(mean, logvar)
-    x_logit = model.decode(z)
-    cross_ent = tf.nn.sigmoid_cross_entropy_with_logits(logits=x_logit, labels=x)
-    logpx_z = -tf.reduce_sum(cross_ent, axis=[1, 2, 3])
-    logpz = log_normal_pdf(z, 0., 0.)
-    logqz_x = log_normal_pdf(z, mean, logvar)
-    return -tf.reduce_mean(logpx_z + logpz - logqz_x)
 
 ### BUILD MODEL
 def build_model(
     initial_filters: int = 8,
     conv_layers: int = 2,
     conv_layer_multiplier: int = 2,
-    #latent_dimensions: int = 8,
-    #fc_layers: int = 0,
-    #fc_layer_size: int = 32,
-    #dropout: float = 0.5,
-    apply_nin: bool = False,
-    nin_filters: int = 32,
     activation: str = "elu",
-    #kernel_size: int = 5,
+    kernel_size: int = 5,
+    fc_layers: int = 2,
+    fc_layer_size: int = 64,
+    dropout: float = 0.5,
+    latent_dimensions: int = 2,
 ):
 
-
-    model = autoencoder.CAE(
+    model = autoencoder.CAESimple(
         initial_filters=initial_filters,
         conv_layers=conv_layers,
         conv_layer_multiplier=conv_layer_multiplier,
-        #latent_dimensions=latent_dimensions,
-        #fc_layers=fc_layers,
-        #fc_layer_size=fc_layer_size,
-        #dropout=dropout,
-        apply_nin=apply_nin,
-        nin_filters=nin_filters,
         activation=activation,
-        #kernel_size=kernel_size,
+        kernel_size=kernel_size,
+        fc_layer_size=fc_layer_size,
+        fc_layers=fc_layers,
+        dropout=dropout,
+        latent_dimensions=latent_dimensions,
     )
     model.build_graph((
         1,
-        44,
+        global_vars.NUM_HAPLOTYPES,
         global_vars.NUM_SNPS,
         global_vars.NUM_CHANNELS,
     ))
@@ -96,7 +76,7 @@ def sort_batch(batch: np.ndarray):
     return sorted_batch
 
 
-def build_data(batch_size: int = 32, sort: bool = True):
+def build_data(batch_size: int = 32, sort: bool = False):
     train_data, test_data = None, None
     with np.load("data/data.npz") as data:
         train_data = data["train"]
@@ -105,7 +85,6 @@ def build_data(batch_size: int = 32, sort: bool = True):
             print ("SORTING")
             train_data = sort_batch(train_data)
             test_data = sort_batch(test_data)
-
     train_ds = tf.data.Dataset.from_tensor_slices(train_data).batch(batch_size)
     test_ds = tf.data.Dataset.from_tensor_slices(test_data).batch(batch_size)
     return train_ds, test_ds
@@ -143,19 +122,17 @@ def train_model_wandb(config=None):
             conv_layers=config.conv_layers,
             conv_layer_multiplier=config.conv_layer_multiplier,
             initial_filters=config.initial_filters,
-            # latent_dimensions=config.latent_dimensions,
-            #fc_layers=config.fc_layers,
-            #fc_layer_size=config.fc_layer_size,
-            #dropout=config.dropout,
-            apply_nin=config.apply_nin,
-            nin_filters=config.nin_filters,
+            latent_dimensions=config.latent_dimensions,
+            fc_layers=config.fc_layers,
+            fc_layer_size=config.fc_layer_size,
+            dropout=config.dropout,
             activation=config.activation,
-            #kernel_size=config.kernel_size,
+            kernel_size=config.kernel_size,
         )
         optimizer = build_optimizer(
             learning_rate=config.learning_rate,
-            #decay_rate=config.decay_rate,
-            #decay_steps=config.decay_steps,
+            decay_rate=config.decay_rate,
+            decay_steps=config.decay_steps,
         )
 
         loss_object = tf.keras.losses.MeanSquaredError()
@@ -163,7 +140,7 @@ def train_model_wandb(config=None):
         train_loss = tf.keras.metrics.Mean(name='train_loss')
         test_loss = tf.keras.metrics.Mean(name='test_loss')
 
-        for epoch in range(config.epochs):
+        for epoch in tqdm.tqdm(range(config.epochs)):
             train_loss.reset_states()
             test_loss.reset_states()
 
@@ -188,55 +165,50 @@ def main(args):
     # set up parameters over which to sweep
     parameters_dict = {
         'optimizer': {
-            'values': ['adam']
+            'value': 'adam'
         },
-        'apply_nin': {
-            'values': [True, False]
-        },
-        'nin_filters': {
-            'values': [16, 32]
-        },
+        
         'initial_filters': {
-            'values': [8, 16, 32]
+            'values': [8, 16]
         },
         'conv_layers': {
-            'values': [3]
+            'value': 3
         },
         'conv_layer_multiplier': {
-            'values': [1, 2]
+            'value': 1
         },
-        # 'latent_dimensions': {
-        #     'values': [4, 8, 16, 32, 64]
-        # },
-        # 'fc_layers': {
-        #     'values': [1, 2, 3, 4]
-        # },
-        # 'fc_layer_size': {
-        #     'values': [16, 32, 64, 128]
-        # },
-        # 'dropout': {
-        #     'values': [0.1, 0.2, 0.3, 0.4, 0.5]
-        # },
+        'latent_dimensions': {
+            'values': [2, 8, 32, 128],
+        },
+        'fc_layers': {
+            'values': [2, 3, 4]
+        },
+        'fc_layer_size': {
+            'values': [16, 32, 64, 128]
+        },
+        'dropout': {
+            'values': [0.1, 0.2, 0.3, 0.4, 0.5]
+        },
         'activation': {
             'values': ['elu', 'relu']
         },
         'learning_rate': {
             'values': [1e-4, 5e-4, 1e-3, 5e-3]
         },
-        # 'decay_rate': {
-        #     'values': [0.92, 0.94, 0.96, 0.98]
-        # },
-        # 'decay_steps': {
-        #     'values': [10]
-        # },
+        'decay_rate': {
+            'values': [0.92, 0.94, 0.96, 0.98]
+        },
+        'decay_steps': {
+            'value': 10
+        },
         'batch_size': {
             'values': [8, 16, 32],
         },
-        # 'kernel_size': {
-        #     'values': [5, 7]
-        # },
+        'kernel_size': {
+            'values': [5, 7]
+        },
         'epochs': {
-            'value': 10
+            'value': 20
         }
     }
 
@@ -249,52 +221,69 @@ def main(args):
 
     else:
 
+        SORT = False
+
         with np.load("data/data.npz") as data:
             train_data = data["train"]
             test_data = data["test"]
 
+        if SORT:
+            train_data = sort_batch(train_data)
+            test_data = sort_batch(test_data)
 
-        f, axarr = plt.subplots(global_vars.NUM_CHANNELS, 1, figsize=(12, global_vars.NUM_CHANNELS * 2))
+        f, ax = plt.subplots(figsize=(12, 6))
         hap = train_data[0, :, :, :]
-        for channel_i in np.arange(global_vars.NUM_CHANNELS):
-            sns.heatmap(hap[:, :, channel_i], ax=axarr[channel_i], cbar=True)
+        sns.heatmap(hap[:, :, 0], ax=ax, cbar=True)
         f.tight_layout()
         f.savefig("training.png", dpi=200)
 
         train_ds, test_ds = build_data(
-            batch_size=8,
-            sort=False,
+            batch_size=16,
+            sort=SORT,
         )
         model = build_model(
             conv_layers=3,
             conv_layer_multiplier=1,
             initial_filters=8,
-            #fc_layers=0,
-            #latent_dimensions=128,
-            #dropout=0.5,
-            #fc_layer_size=64,
-            apply_nin=True,
-            nin_filters=16,
             activation='elu',
-            #kernel_size=5,
+            kernel_size=5,
+            fc_layers=2,
+            fc_layer_size=64,
+            latent_dimensions=32,
+            dropout=0.5,
         )
-        optimizer = build_optimizer(learning_rate=5e-3)
+        optimizer = build_optimizer(learning_rate=5e-3, decay_rate=0.92, decay_steps=10)
 
         train_loss = tf.keras.metrics.Mean(name='train_loss')
         test_loss = tf.keras.metrics.Mean(name='test_loss')
         loss_object = tf.keras.losses.MeanSquaredError()
+
+        root_dist = np.array([0.25, 0.25, 0.25, 0.25])
+
+        sim = simulation.simulate_exp
+
+        # first, initialize generator object
+        gen = generator.Generator(
+            sim,
+            [global_vars.NUM_HAPLOTYPES // 2],
+            np.random.randint(1, 2**32),
+        )
 
         res = []
 
         prev_loss = np.inf
         bad_epochs = 0
         total_epochs = 0
-        while bad_epochs < 5 and total_epochs < 20:
+        while bad_epochs < 5 and total_epochs < 10:
 
-            #for epoch in range(EPOCHS):
-            # Reset the metrics at the start of the next epoch
             train_loss.reset_states()
             test_loss.reset_states()
+
+            # train_data = gen.simulate_batch(1_000, root_dist, mutator_threshold=0)
+            # test_data = gen.simulate_batch(1_000, root_dist, mutator_threshold=0)
+
+            # train_ds = tf.data.Dataset.from_tensor_slices(train_data).batch(16)
+            # test_ds = tf.data.Dataset.from_tensor_slices(train_data).batch(16)
 
             for images in train_ds:
                 train_step(images, images, model, optimizer, loss_object, train_loss)
@@ -331,33 +320,33 @@ def main(args):
         # create some new simulated data. we'll use these data to figure out the reconstruction
         # error of the model on unseen data.
 
-        root_dist = np.array([0.25, 0.25, 0.25, 0.25])
+        
 
-        sim = simulation.simulate_gough
-
-        # first, initialize generator object
-        gen = generator.Generator(
-            sim,
-            [14, 8],
-            np.random.randint(1, 2**32),
-        )
-
-        N_ROC = 1_000
+        N_ROC = 200
 
         # simulate a bunch of training examples
         normal_data = gen.simulate_batch(N_ROC, root_dist, mutator_threshold=0)
         mutator_data = gen.simulate_batch(N_ROC, root_dist, mutator_threshold=1)
+        # sort
+        if SORT:
+            normal_data_sorted = sort_batch(normal_data)
+            mutator_data_sorted = sort_batch(mutator_data)
+        else:
+            normal_data_sorted = np.copy(normal_data)
+            mutator_data_sorted = np.copy(mutator_data)
+
 
         #normal_data_split = np.concatenate(np.split(normal_data, global_vars.NUM_HAPLOTYPES, axis=1))
         #mutator_data_split = np.concatenate(np.split(mutator_data, global_vars.NUM_HAPLOTYPES, axis=1))
         # to_predict = np.expand_dims(normal_data[:, 0, :, :], axis=0)
-        encoded_data = model.encoder(normal_data).numpy()
+        encoded_data = model.encoder(normal_data_sorted).numpy()
         decoded_data = model.decoder(encoded_data).numpy()
 
-        f, axarr = plt.subplots(global_vars.NUM_CHANNELS, 2, figsize=(16, global_vars.NUM_CHANNELS * 2))
-        for channel_i in np.arange(global_vars.NUM_CHANNELS):
-            sns.heatmap(normal_data[0, :, :, channel_i], ax=axarr[channel_i, 0], cbar=True)
-            sns.heatmap(decoded_data[0, :, :, channel_i], ax=axarr[channel_i, 1], cbar=True)
+        f, axarr = plt.subplots(global_vars.NUM_CHANNELS, 3, figsize=(16, global_vars.NUM_CHANNELS * 2))
+        #for channel_i in range(global_vars.NUM_CHANNELS):
+        sns.heatmap(normal_data_sorted[0, :, :, 0], ax=axarr[0], cbar=True)
+        sns.heatmap(normal_data_sorted[0, :, :, 0], ax=axarr[1], cbar=True)
+        sns.heatmap(decoded_data[0, :, :, 0], ax=axarr[2], cbar=True)
 
         f.tight_layout()
         f.savefig("real_vs_decoded.png", dpi=200)

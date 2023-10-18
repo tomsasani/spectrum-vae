@@ -45,11 +45,11 @@ class ParamSet:
         self.growth = Parameter(5e-3, 5e-3, "growth")
 
         self.mutator_prob = Parameter(0, 1, "mu_prob")
-        self.mutator_effect_size = Parameter(5, 5, "mu_effect")
+        self.mutator_effect_size = Parameter(2, 5, "mu_effect")
         self.mutator_duration = Parameter(100, 300, "mu_duration")
-        self.mutator_emergence = Parameter(1, 3500, "mu_emergence")
-        # self.mutator_start = Parameter(1, global_vars.L, "mu_start")
-        # self.mutator_length = Parameter(10_000, 10_000, "mu_length")
+        self.mutator_emergence = Parameter(1_000, 1_000, "mu_emergence")
+        self.mutator_start = Parameter(15_000, 15_000, "mu_start")
+        self.mutator_length = Parameter(20_000, 20_000, "mu_length")
 
         self.N_gough = Parameter(20_000, 20_000, "N_gough")
         self.N_mainland = Parameter(50_000, 50_000, "N_mainland")
