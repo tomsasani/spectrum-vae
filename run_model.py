@@ -285,9 +285,9 @@ def main(args):
             # train_ds = tf.data.Dataset.from_tensor_slices(train_data).batch(16)
             # test_ds = tf.data.Dataset.from_tensor_slices(train_data).batch(16)
 
-            for images in train_ds:
+            for images in tqdm.tqdm(train_ds):
                 train_step(images, images, model, optimizer, loss_object, train_loss)
-            for images in test_ds:
+            for images in tqdm.tqdm(test_ds):
                 test_step(images, images, model, loss_object, test_loss)
 
             validation_loss = test_loss.result()
