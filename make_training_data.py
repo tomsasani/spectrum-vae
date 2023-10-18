@@ -1,4 +1,3 @@
-from PIL import Image
 import simulation 
 import generator 
 import global_vars
@@ -9,7 +8,7 @@ root_dist = np.array([0.25, 0.25, 0.25, 0.25])
 
 sim = simulation.simulate_exp
 
-N = 50_000 
+N = 10_000 
 
 # first, initialize generator object
 gen = generator.Generator(
