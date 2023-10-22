@@ -9,7 +9,7 @@ import numpy as np
 root_dist = np.array([0.25, 0.25, 0.25, 0.25])
 
 sim = simulation.simulate_exp
-N = 1_000
+N = 10_000
 
 # first, initialize generator object
 gen = generator.Generator(

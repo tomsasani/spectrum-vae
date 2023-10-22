@@ -208,7 +208,7 @@ def main(args):
             'values': [3, 5]
         },
         'epochs': {
-            'value': 5
+            'value': 10
         },
         'sort_data': {
             'value': True,
