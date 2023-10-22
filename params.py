@@ -37,17 +37,20 @@ class ParamSet:
         self.N2 = Parameter(3300, 3300, "N2")
         self.T1 = Parameter(3500, 3500, "T1")
         self.T2 = Parameter(1000, 1000, "T2")
+        self.N_anc = Parameter(15000, 15000, "N_anc")
+        self.T_split = Parameter(2000, 2000, "T_split")
+        self.mig = Parameter(0.05, 0.05, "mig")
         # recombination rate
         self.rho = Parameter(1.25e-8, 1.25e-8, "rho")
         # mutation rate
         self.mu = Parameter(1.25e-8, 1.25e-8, "mu")
         # population growth parameter
         self.growth = Parameter(5e-3, 5e-3, "growth")
-
+        self.kappa = Parameter(2.1, 3, "kappa")
         self.mutator_prob = Parameter(0, 1, "mu_prob")
-        self.mutator_effect_size = Parameter(2, 5, "mu_effect")
+        self.mutator_effect_size = Parameter(1.5, 2, "mu_effect")
         self.mutator_duration = Parameter(100, 300, "mu_duration")
-        self.mutator_emergence = Parameter(1_000, 1_000, "mu_emergence")
+        self.mutator_emergence = Parameter(1, 3_500, "mu_emergence")
         self.mutator_start = Parameter(15_000, 15_000, "mu_start")
         self.mutator_length = Parameter(20_000, 20_000, "mu_length")
 
