@@ -15,18 +15,28 @@ import simulation
 import util
 import tqdm
 import tskit
+from typing import List, Union
+
 
 class Generator:
 
-    def __init__(self, simulator, sample_sizes, seed):
+    def __init__(self, simulator, sample_sizes, param_names, seed):
         self.simulator = simulator
         self.sample_sizes = sample_sizes
+        self.param_names = param_names
         self.rng = np.random.default_rng(seed)
 
         self.curr_params = None
 
-
-    def simulate_batch(self, batch_size: int, root_dist: np.ndarray, mutator_threshold: float = 0.01, plot: bool = False):
+    def simulate_batch(
+        self,
+        batch_size: int,
+        root_dist: np.ndarray,
+        param_values: List[Union[float, int]] = [],
+        treat_as_real: bool = False,
+        mutator_threshold: float = 0.01,
+        plot: bool = False,
+    ):
         """
         """
 
@@ -44,7 +54,13 @@ class Generator:
         plotted = False
 
         # initialize the collection of parameters
-        parameters = params.ParamSet()
+        sim_params = params.ParamSet()
+        if treat_as_real:
+            pass
+        elif params == []:
+            sim_params.update(self.param_names, self.curr_params)
+        else:
+            sim_params.update(self.param_names, param_values)
 
         # simulate each region
         for i in tqdm.tqdm(range(batch_size)):
@@ -55,7 +71,7 @@ class Generator:
 
             #root_dist_adj = util.add_noise(root_dist)
             ts = self.simulator(
-                parameters,
+                sim_params,
                 self.sample_sizes,
                 root_dist,
                 self.rng,
@@ -90,7 +106,7 @@ def prep_simulated_region(ts) -> np.ndarray:
         non_missing_genotypes = v.genotypes[v.genotypes != tskit.MISSING_DATA]
         if np.any(np.bincount(non_missing_genotypes) == 1):
             sites_with_a_singleton_allele.append(v.site.id)
-            
+
     # Strip those sites from the tree sequence
     ts = ts.delete_sites(sites_with_a_singleton_allele)
 
@@ -119,6 +135,7 @@ def prep_simulated_region(ts) -> np.ndarray:
     assert positions.shape[0] == X.shape[0]
 
     return X, positions
+
 
 # testing
 if __name__ == "__main__":

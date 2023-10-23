@@ -233,7 +233,6 @@ def main(args):
 
         CONV_LAYERS = 3
 
-
         train_data = sort_batch(train_data)
         shape = train_data.shape
 
@@ -253,14 +252,6 @@ def main(args):
             test_size=0.2,
         )
 
-        # (train_data, _), (test_data, _) = fashion_mnist.load_data()
-
-        # train_data = train_data.astype('float32') / 255.
-        # test_data = test_data.astype('float32') / 255.
-
-        # train_data = train_data[:1000, :, :]
-        # test_data = test_data[:250, :, :]
-
         idx = np.random.randint(X_train.shape[0])
         f, axarr = plt.subplots(global_vars.NUM_CHANNELS, figsize=(12, 8))
         haps = X_train[idx, :, :, :]
@@ -272,8 +263,8 @@ def main(args):
         model = build_model(
             input_shape=input_shape[1:],
             conv_layers=CONV_LAYERS,
-            conv_layer_multiplier=1,
-            initial_filters=32,
+            conv_layer_multiplier=2,
+            initial_filters=8,
             activation='elu',
             kernel_size=3,
             conv_operations=1,
@@ -281,6 +272,7 @@ def main(args):
             fc_layer_size=256,
             dropout=0.2,
             latent_dimensions=0,
+            batch_norm=False,
         )
 
         callback = tf.keras.callbacks.EarlyStopping(monitor='loss', patience=3)
@@ -289,7 +281,7 @@ def main(args):
         model.compile(optimizer=optimizer, loss=losses.MeanSquaredError())
 
         history = model.fit(X_train, X_train,
-                epochs=5,
+                epochs=20,
                 shuffle=True,
                 validation_data = (X_test, X_test),
                 callbacks=[callback],
