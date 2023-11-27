@@ -38,6 +38,10 @@ def inter_snp_distances(positions: np.ndarray, norm_len: int) -> np.ndarray:
             # NOTE: inter-snp distances always normalized to simulated region size
             dist_vec.append((positions[i + 1] - positions[i]) / norm_len)
     else: dist_vec = []
+    dist_vec = np.array(dist_vec)
+
+    # normalize between -1 and 1
+    dist_vec = (2 * (dist_vec - np.min(dist_vec)) / (np.max(dist_vec) - np.min(dist_vec))) - 1
     return np.array(dist_vec)
 
 
@@ -77,7 +81,7 @@ def find_segregating_idxs(X: np.ndarray):
     return np.where(to_keep)[0]
 
 
-def process_region(
+def process_region_onehot(
     X: np.ndarray,
     positions: np.ndarray,
 ) -> np.ndarray:
@@ -99,12 +103,9 @@ def process_region(
     """
     # figure out how many sites and haplotypes are in the actual
     # multi-dimensional array
-    n_sites, n_haps, n_channels = X.shape
+    n_nucs, n_sites, n_haps, n_channels = X.shape
     # make sure we have exactly as many positions as there are sites
     assert n_sites == positions.shape[0]
-
-    # check for multi-allelics
-    #assert np.max(X) == 1
 
     # figure out the half-way point (measured in numbers of sites)
     # in the input array
@@ -113,7 +114,79 @@ def process_region(
 
     # instantiate the new region, formatted as (n_haps, n_sites, n_channels)
     region = np.zeros(
-        (n_haps, global_vars.NUM_SNPS, global_vars.NUM_CHANNELS),
+        (n_nucs, global_vars.NUM_SNPS, n_haps, 2 + 1),
+        dtype=np.float32,
+    )
+
+    # should we divide by the *actual* region length?
+    distances = inter_snp_distances(positions, global_vars.L)
+
+    # if we have more than the necessary number of SNPs
+    if mid >= half_S:
+        # define indices to use for slicing
+        i, j = mid - half_S, mid + half_S
+        # add sites to output
+        to_add = X[:, i:j, :, :]
+        to_add[to_add == 0] = -1
+        region[:, :, :, :-1] = to_add
+        # add one-hot to output
+        # tile the inter-snp distances down the haplotypes
+        # get inter-SNP distances, relative to the simualted region size
+        distances_tiled = np.tile(distances[i:j], (4, n_haps, 1))
+        # add final channel of inter-snp distances
+        region[:, :, :, -1] = np.transpose(distances_tiled, (0, 2, 1))
+
+    else:
+        other_half_S = half_S + 1 if n_sites % 2 == 1 else half_S
+        i, j = half_S - mid, mid + other_half_S
+        # use the complete genotype array
+        # but just add it to the center of the main array
+        to_add = X
+        to_add[to_add == 0] = -1
+        region[:, i:j, :, :] = X
+        # add one-hot to output
+        # tile the inter-snp distances down the haplotypes
+        distances_tiled = np.tile(distances, (4, n_haps, 1))
+        # add final channel of inter-snp distances
+        region[:, i:j, :, -1] = np.transpose(distances_tiled, (0, 2, 1))
+
+    return region
+
+
+def process_region(
+    X: np.ndarray,
+    positions: np.ndarray,
+) -> np.ndarray:
+    """
+    Process an array of shape (n_sites, n_haps, 6), which is produced
+    from either generated or real data. First, subset it to contain global_vars.NUM_SNPS
+    polymorphisms, and then calculate the sums of derived alleles on each haplotype in global_vars.N_WINDOWS
+    windows across the arrays. 
+
+    Zero-pad if necessary.
+
+    Args:
+        X (np.ndarray): feature array of shape (n_sites, n_haps, n_channels - 1)
+        positions (np.ndarray): array of positions that correspond to each of the
+            n_sites in the feature array.
+
+    Returns:
+        np.ndarray: _description_
+    """
+    # figure out how many sites and haplotypes are in the actual
+    # multi-dimensional array
+    n_sites, n_haps, n_channels = X.shape
+    # make sure we have exactly as many positions as there are sites
+    assert n_sites == positions.shape[0]
+
+    # figure out the half-way point (measured in numbers of sites)
+    # in the input array
+    mid = n_sites // 2
+    half_S = global_vars.NUM_SNPS // 2
+
+    # instantiate the new region, formatted as (n_haps, n_sites, n_channels)
+    region = np.zeros(
+        (n_haps, global_vars.NUM_SNPS, 7),
         dtype=np.float32,
     )
 
@@ -123,36 +196,32 @@ def process_region(
     # first, transpose the full input matrix to be n_haps x n_snps
     X = np.transpose(X, (1, 0, 2))
 
-    # sum across channels
-    #X = np.expand_dims(np.sum(X, axis=2), axis=2)
-
-    assert(np.max(X) == 1)
+    assert np.max(X) == 1
 
     # if we have more than the necessary number of SNPs
     if mid >= half_S:
         # define indices to use for slicing
         i, j = mid - half_S, mid + half_S
         # add sites to output
-        region[:, :, :] = major_minor(X[:, i:j, :])
+        region[:, :, :-1] = major_minor(X[:, i:j, :]) 
         # add one-hot to output
         # tile the inter-snp distances down the haplotypes
         # get inter-SNP distances, relative to the simualted region size
         distances_tiled = np.tile(distances[i:j], (n_haps, 1))
         # add final channel of inter-snp distances
-        #region[:, :, -1] = distances_tiled
+        region[:, :, -1] = distances_tiled
 
     else:
         other_half_S = half_S + 1 if n_sites % 2 == 1 else half_S
         i, j = half_S - mid, mid + other_half_S
         # use the complete genotype array
         # but just add it to the center of the main array
-        region[:, i:j, :] = major_minor(X)
+        region[:, :, :-1] = major_minor(X)
         # add one-hot to output
         # tile the inter-snp distances down the haplotypes
         distances_tiled = np.tile(distances, (n_haps, 1))
         # add final channel of inter-snp distances
-        #region[:, i:j, -1] = distances_tiled
-
+        region[:, i:j, -1] = distances_tiled
 
     return region
 
@@ -162,16 +231,16 @@ def major_minor(matrix):
 
     # NOTE: need to fix potential mispolarization if using ancestral genome?
     n_haps, n_sites, n_channels = matrix.shape
-    
+
     # figure out the channel in which each mutation occurred
     for site_i in range(n_sites):
-        #channel_haplotypes = matrix[:, site_i, :]        
         for mut_i in range(n_channels):
             # in this channel, figure out whether this site has any derived alleles
             haplotypes = matrix[:, site_i, mut_i]
             # if not, we'll mask all haplotypes at this site on this channel,
             # leaving the channel with the actual mutation unmasked
-            if np.count_nonzero(haplotypes) == 0: continue
+            if np.count_nonzero(haplotypes) == 0:
+                continue
             else:
                 # if there are derived alleles and there are more derived than ancestral,
                 # flip the polarization
