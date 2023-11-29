@@ -7,11 +7,23 @@ import numpy as np
 from tensorflow.keras import layers
 from tensorflow.keras.models import Model
 
+# figure out how many filters we need to get the
+# number of snps down to a width of 4
+
+final_width = 4
+n_filters = 0
+while global_vars.NUM_SNPS / (2**n_filters) > final_width:
+    n_filters += 1
+
+FILTER_SIZES = [64]
+for fi in range(1, n_filters):
+    if fi == 1:
+        FILTER_SIZES.append(FILTER_SIZES[0])
+    else:
+        FILTER_SIZES.append(FILTER_SIZES[fi - 1] * 2)
 
 # define filter sizes for each of the n - 1 convolutional layers
-FILTER_SIZES = [64, 64, 128, 256, 512]
-FILTER_SIZES = [f // 4 for f in FILTER_SIZES]
-
+FILTER_SIZES = [f // 1 for f in FILTER_SIZES]
 
 class ContextEncoderOneHot(Model):
     def __init__(
@@ -36,7 +48,7 @@ class ContextEncoderOneHot(Model):
         # build encoder architecture
         encoder_ = [layers.Input(shape=input_shape)]
 
-        filter_sizes = FILTER_SIZES[:ni + 1]
+        filter_sizes = FILTER_SIZES[: ni + 1]
 
         for filter_size in filter_sizes:
             # block is a convolution + maxpool
@@ -45,9 +57,10 @@ class ContextEncoderOneHot(Model):
                     filter_size,
                     (1, kernel_size),
                     strides=(1, 2),
-                    activation=activation,
+                    activation=layers.LeakyReLU(0.2),
                     padding="same",
                 ),
+                layers.BatchNormalization(),
             ]
             encoder_.extend(block)
             # adjust width for max pooling operation
@@ -59,37 +72,43 @@ class ContextEncoderOneHot(Model):
                 latent_dimensions,
                 (4, kernel_size),
                 strides=(1, 1),
-                activation=activation,
+                activation="relu",  # layers.LeakyReLU(0.2),
                 padding="valid",
-            )
+            ),
         )
 
         self.encoder = tf.keras.Sequential(encoder_)
 
+        # decoder architecture
+        # NOTE: relu in decoder, no batchnorm
+
         decoder_ = []
 
-        decoder_.append(
-            layers.Conv2DTranspose(
-                filter_sizes[-1],
-                (4, kernel_size),
-                activation=activation,
-                padding="valid",
-                input_shape=(1, 1, latent_dimensions),
-            ),
+        decoder_.append(layers.BatchNormalization())
+
+        decoder_.extend(
+            [
+                layers.Conv2DTranspose(
+                    filter_sizes[-1],
+                    (kernel_size, kernel_size),
+                    activation="relu",
+                    padding="valid",
+                    input_shape=(1, 1, latent_dimensions),
+                ),
+            ],
         )
 
         # loop over filter sizes in reverse, skipping final
-        # layer.
         for filter_size in filter_sizes[1:-1][::-1]:
-            # block is a convolution + maxpool
             block = [
                 layers.Conv2DTranspose(
                     filter_size,
                     (1, kernel_size),
                     strides=(1, 2),
-                    activation=activation,
+                    activation="relu",
                     padding="same",
                 ),
+                # layers.BatchNormalization(),
             ]
             decoder_.extend(block)
 
@@ -104,8 +123,6 @@ class ContextEncoderOneHot(Model):
                 padding="same",
             )
         )
-
-        # decoder_.append(layers.Reshape((input_shape)))
 
         self.decoder = tf.keras.Sequential(decoder_)
 
@@ -142,19 +159,24 @@ class DiscriminatorOneHot(Model):
         n = int(np.log2(input_shape[1]))
         ni = n - 3
 
-        filter_sizes = FILTER_SIZES[:ni + 1]
+        filter_sizes = FILTER_SIZES[: ni + 1]
+
+        # NOTE: LeakyReLU in discriminator, batch norm
 
         disc_ = [layers.Input(shape=input_shape)]
 
         for filter_size in filter_sizes:
-            disc_.append(
-                layers.Conv2D(
-                    filter_size,
-                    (1, kernel_size),
-                    strides=(1, 2),
-                    padding="same",
-                    activation=activation,
-                )
+            disc_.extend(
+                [
+                    layers.Conv2D(
+                        filter_size,
+                        (1, kernel_size),
+                        strides=(1, 2),
+                        padding="same",
+                        activation=layers.LeakyReLU(0.2),
+                    ),
+                    layers.BatchNormalization(),
+                ]
             )
 
         # final layer collapses to a single value
@@ -164,6 +186,7 @@ class DiscriminatorOneHot(Model):
                 (4, kernel_size),
                 strides=(1, 1),
                 padding="valid",
+                activation="sigmoid",
             )
         )
         disc_.append(layers.Flatten())
@@ -191,47 +214,35 @@ class ContextEncoder(Model):
         input_shape: Tuple[int] = (
             global_vars.NUM_HAPLOTYPES,
             global_vars.NUM_SNPS,
-            7,
+            global_vars.NUM_CHANNELS,
         ),
         kernel_size: int = 4,
         latent_dimensions: int = 1_000,
-        activation: str = "relu",
-        padding: str = "same",
     ):
         super(ContextEncoder, self).__init__()
-
-        image_width = input_shape[1]
-
-        n = int(np.log2(image_width))
-        ni = n - 3
 
         # build encoder architecture
         encoder_ = [layers.Input(shape=input_shape)]
 
-        filter_sizes = FILTER_SIZES[:ni + 1]
-
-        for filter_size in filter_sizes:
-            # block is a convolution + maxpool
+        for filter_size in FILTER_SIZES:
             block = [
                 layers.Conv2D(
                     filter_size,
                     (kernel_size, kernel_size),
                     strides=(2, 2),
-                    activation=activation,
+                    activation=layers.LeakyReLU(0.2),
                     padding="same",
                 ),
+                layers.BatchNormalization(),
             ]
             encoder_.extend(block)
-            # adjust width for max pooling operation
-            # image_width /= 2
 
-        # final layer should take (4, 4, 256) and collapse to (1, 1, latent_dims)
         encoder_.append(
             layers.Conv2D(
                 latent_dimensions,
                 (kernel_size, kernel_size),
                 strides=(1, 1),
-                activation=activation,
+                activation=layers.LeakyReLU(0.2),
                 padding="valid",
             )
         )
@@ -240,26 +251,29 @@ class ContextEncoder(Model):
 
         decoder_ = []
 
+        decoder_.append(layers.BatchNormalization())
+
+        # convolve back to final feature map size
         decoder_.append(
             layers.Conv2DTranspose(
-                filter_sizes[-1],
+                FILTER_SIZES[-1],
                 (kernel_size, kernel_size),
-                activation=activation,
-                #padding="same",
+                activation="relu",
+                padding="valid",
                 input_shape=(1, 1, latent_dimensions),
             ),
         )
 
         # loop over filter sizes in reverse, skipping final
         # layer.
-        for filter_size in filter_sizes[1:-1][::-1]:
+        for filter_size in FILTER_SIZES[1:-1][::-1]:
             # block is a convolution + maxpool
             block = [
                 layers.Conv2DTranspose(
                     filter_size,
                     (kernel_size, kernel_size),
                     strides=(2, 2),
-                    activation=activation,
+                    activation="relu",
                     padding="same",
                 ),
             ]
@@ -276,8 +290,6 @@ class ContextEncoder(Model):
                 padding="same",
             )
         )
-
-        # decoder_.append(layers.Reshape((input_shape)))
 
         self.decoder = tf.keras.Sequential(decoder_)
 
@@ -302,43 +314,49 @@ class Discriminator(Model):
     def __init__(
         self,
         input_shape: Tuple[int] = (
-            global_vars.NUM_HAPLOTYPES // 2,
             global_vars.NUM_SNPS // 2,
-            7,
+            global_vars.NUM_SNPS // 2,
+            global_vars.NUM_CHANNELS,
         ),
-        activation: str = "relu",
         kernel_size: int = 4,
     ):
         super(Discriminator, self).__init__()
 
-        n = int(np.log2(input_shape[1]))
-        ni = n - 3
-
-        filter_sizes = FILTER_SIZES[:ni + 1]
-
         disc_ = [layers.Input(shape=input_shape)]
 
-        for filter_size in filter_sizes:
-            disc_.append(
+        for filter_size in FILTER_SIZES[1:]:
+            block = [
                 layers.Conv2D(
                     filter_size,
                     (kernel_size, kernel_size),
                     strides=(2, 2),
                     padding="same",
-                    activation=activation,
-                )
-            )
+                    activation=layers.LeakyReLU(0.2),
+                ),
+                layers.BatchNormalization(),
+            ]
+            disc_.extend(block)
+
+        final_block = [
+                layers.Conv2D(
+                    1,
+                    (kernel_size, kernel_size),
+                    strides=(1, 1),
+                    padding="valid",
+                    activation="sigmoid",
+                ),
+            ]
+        disc_.extend(final_block)
+
+        disc_.append(layers.Flatten())
 
         # final layer collapses to a single value
-        disc_.append(
-            layers.Conv2D(
-                1,
-                (kernel_size, kernel_size),
-                strides=(1, 1),
-                padding="valid",
-            )
-        )
-        disc_.append(layers.Flatten())
+        # disc_.append(
+        #     layers.Dense(
+        #         1,
+        #         activation="sigmoid",
+        #     )
+        # )
 
         self.discriminator = tf.keras.Sequential(disc_)
 
