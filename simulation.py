@@ -7,12 +7,55 @@ import math
 
 import global_vars
 
+def get_transition_matrix(effect_size: float = 1.):
+
+    # define expected mutation probabilities
+    mutations = ["C>T", "C>A", "C>G", "A>T", "A>C", "A>G"]
+    lambdas = np.array([46, 17, 12, 1, 7.5, 17])
+    lambdas[0] *= effect_size
+    transition_matrix = np.zeros((4, 4))
+
+    # for every mutation type...
+    for mutation, prob in zip(mutations, lambdas):
+        # get the indices of the reference and alt alleles
+        ref, alt = mutation.split(">")
+        # as well as the reverse complement
+        ref_rc, alt_rc = global_vars.REVCOMP[ref], global_vars.REVCOMP[alt]
+        # add its mutation probability to the transition matrix
+        for r, a in ((ref, alt), (ref_rc, alt_rc)):
+            ri, ai = global_vars.NUC2IDX[r], global_vars.NUC2IDX[a]
+            transition_matrix[ri, ai] = prob
+
+    # normalize transition matrix so that rows sum to 1
+    rowsums = np.sum(transition_matrix, axis=1)
+    norm_transition_matrix = transition_matrix / rowsums[:, np.newaxis]
+    np.fill_diagonal(norm_transition_matrix, val=0)
+
+    return norm_transition_matrix
+
+
+def parameterize_mutation_model(root_dist: np.ndarray, effect_size: float = 1.):
+
+    norm_transition_matrix = get_transition_matrix(effect_size=effect_size)
+
+    if np.sum(root_dist) != 1:
+        root_dist = root_dist / np.sum(root_dist)
+
+    model = msprime.MatrixMutationModel(
+        global_vars.NUC_ORDER,
+        root_distribution=root_dist,
+        transition_matrix=norm_transition_matrix,
+    )
+
+    return model
+
 
 def simulate_exp(
     params,
     sample_sizes,
+    root_dist: np.ndarray,
     rng: np.random.default_rng,
-    kappa: float = 2,
+    effect_size: float = 1.,
     plot: bool = False,
 ):
     # get random seed for msprime simulations
@@ -67,8 +110,8 @@ def simulate_exp(
     )
 
     mu = params.mu.value
-    mutation_model = msprime.F84(kappa=kappa)
-
+    # mutation_model = msprime.F84(kappa=kappa)
+    mutation_model = parameterize_mutation_model(root_dist, effect_size=effect_size)
     # otherwise, simulate constant mutation rate across the region for all time
     mts = msprime.sim_mutations(
         ts,

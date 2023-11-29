@@ -31,9 +31,10 @@ class Generator:
     def simulate_batch(
         self,
         batch_size: int,
+        root_dist: np.ndarray,
         param_values: List[Union[float, int]] = [],
         treat_as_real: bool = False,
-        kappa: float = 2.0,
+        effect_size: float = 1.,
         plot: bool = False,
         one_hot: bool = True,
     ):
@@ -57,7 +58,7 @@ class Generator:
                     batch_size,
                     sum(self.sample_sizes) * 2,
                     global_vars.NUM_SNPS,
-                    7,
+                    global_vars.NUM_CHANNELS,
                 ),
                 dtype=np.float32,
             )
@@ -82,8 +83,9 @@ class Generator:
             ts = self.simulator(
                 sim_params,
                 self.sample_sizes,
+                root_dist,
                 self.rng,
-                kappa=kappa,
+                effect_size=effect_size,
                 plot=True if plot and not plotted else False,
             )
             # return 3D array
