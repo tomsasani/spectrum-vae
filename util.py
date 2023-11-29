@@ -186,7 +186,7 @@ def process_region(
 
     # instantiate the new region, formatted as (n_haps, n_sites, n_channels)
     region = np.zeros(
-        (n_haps, global_vars.NUM_SNPS, 7),
+        (n_haps, global_vars.NUM_SNPS, global_vars.NUM_CHANNELS),
         dtype=np.float32,
     )
 
@@ -196,6 +196,9 @@ def process_region(
     # first, transpose the full input matrix to be n_haps x n_snps
     X = np.transpose(X, (1, 0, 2))
 
+    # sum across channels
+    X = np.sum(X, axis=2)
+
     assert np.max(X) == 1
 
     # if we have more than the necessary number of SNPs
@@ -203,7 +206,7 @@ def process_region(
         # define indices to use for slicing
         i, j = mid - half_S, mid + half_S
         # add sites to output
-        region[:, :, :-1] = major_minor(X[:, i:j, :]) 
+        region[:, :, 0] = major_minor(X[:, i:j])
         # add one-hot to output
         # tile the inter-snp distances down the haplotypes
         # get inter-SNP distances, relative to the simualted region size
@@ -216,7 +219,7 @@ def process_region(
         i, j = half_S - mid, mid + other_half_S
         # use the complete genotype array
         # but just add it to the center of the main array
-        region[:, :, :-1] = major_minor(X)
+        region[:, i:j, 0] = major_minor(X)
         # add one-hot to output
         # tile the inter-snp distances down the haplotypes
         distances_tiled = np.tile(distances, (n_haps, 1))
@@ -230,28 +233,28 @@ def major_minor(matrix):
     """Note that matrix.shape[1] may not be S if we don't have enough SNPs"""
 
     # NOTE: need to fix potential mispolarization if using ancestral genome?
-    n_haps, n_sites, n_channels = matrix.shape
+    n_haps, n_sites = matrix.shape
 
     # figure out the channel in which each mutation occurred
     for site_i in range(n_sites):
-        for mut_i in range(n_channels):
-            # in this channel, figure out whether this site has any derived alleles
-            haplotypes = matrix[:, site_i, mut_i]
-            # if not, we'll mask all haplotypes at this site on this channel,
-            # leaving the channel with the actual mutation unmasked
-            if np.count_nonzero(haplotypes) == 0:
-                continue
+        # for mut_i in range(n_channels):
+        # in this channel, figure out whether this site has any derived alleles
+        haplotypes = matrix[:, site_i]
+        # if not, we'll mask all haplotypes at this site on this channel,
+        # leaving the channel with the actual mutation unmasked
+        if np.count_nonzero(haplotypes) == 0:
+            continue
+        else:
+            # if there are derived alleles and there are more derived than ancestral,
+            # flip the polarization
+            if np.count_nonzero(haplotypes) > (n_haps / 2):
+                # if greater than 50% of haplotypes are ALT, reverse
+                # the REF/ALT polarization
+                haplotypes = 1 - haplotypes
+                haplotypes[haplotypes == 0] = -1
+                matrix[:, site_i] = haplotypes
+            # if there are fewer derived than ancestral, keep the haplotypes as is
             else:
-                # if there are derived alleles and there are more derived than ancestral,
-                # flip the polarization
-                if np.count_nonzero(haplotypes) > (n_haps / 2):
-                    # if greater than 50% of haplotypes are ALT, reverse
-                    # the REF/ALT polarization
-                    haplotypes = 1 - haplotypes
-                    haplotypes[haplotypes == 0] = -1
-                    matrix[:, site_i, mut_i] = haplotypes
-                # if there are fewer derived than ancestral, keep the haplotypes as is
-                else:
-                    haplotypes[haplotypes == 0] = -1
-                    matrix[:, site_i, mut_i] = haplotypes
+                haplotypes[haplotypes == 0] = -1
+                matrix[:, site_i] = haplotypes
     return matrix

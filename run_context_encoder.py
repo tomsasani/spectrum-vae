@@ -21,18 +21,39 @@ from sklearn.metrics import roc_curve
 from tensorflow.keras.datasets import fashion_mnist
 
 
+def create_image_mask(X: np.ndarray):
+    # get shape of array
+    batch_size, n_nucs, n_snps, n_channels = X.shape
+
+    # find middle half of image and define using indices
+    quarter_i = n_snps // 4
+    i, j = quarter_i, quarter_i * 3
+
+    # create new input image
+    X_ = X.copy()
+
+    # create the array that represents the expected "middle"
+    # of the image
+    y_ = X[:, i:j, i:j, :]
+    # add the "left" and "right" sides of the original image
+
+    X_[:, i:j, i:j, :] = 0
+
+    return X_, y_
+
+
 def build_model(
     input_shape: Tuple[int] = (
         1,
+        4,
         global_vars.NUM_SNPS,
         global_vars.NUM_CHANNELS,
     ),
     activation: str = "elu",
     latent_dimensions: int = 8,
 ):
-    model = context_encoder.ContextEncoderOneHot(
+    model = context_encoder.ContextEncoder(
         input_shape=input_shape,
-        activation=activation,
         latent_dimensions=latent_dimensions,
     )
 
@@ -52,6 +73,8 @@ def build_model(
 
 def build_optimizer(
     learning_rate: float = 1e-4,
+    beta_1: float = 0.5,
+    beta_2: float = 0.999,
     decay_rate: float = 0.96,
     decay_steps: int = 10,
 ):
@@ -61,41 +84,63 @@ def build_optimizer(
         decay_rate=decay_rate,
         staircase=True,
     )
-    optimizer = tf.keras.optimizers.legacy.Adam(learning_rate=lr_schedule)
+    optimizer = tf.keras.optimizers.legacy.Adam(
+        learning_rate=lr_schedule,
+        beta_1=beta_1,
+        beta_2=beta_2,
+    )
     return optimizer
 
 
-def measure_disc_loss(discriminator, y_pred, y_true):
+def measure_disc_loss(discriminator, y_true, y_pred, reduction: str = "auto"):
+    loss_func = tf.keras.losses.BinaryCrossentropy(
+        from_logits=False,
+        reduction=reduction,
+    )
+
     # calculate adversarial loss. take the average of the loss of the
     # discriminator on both real and predicted fills
     true_disc_prediction = discriminator(y_true, training=True)
     true_disc_labels = tf.ones_like(true_disc_prediction)
-    true_disc_loss = tf.keras.losses.binary_crossentropy(
+    true_disc_loss = loss_func(
         true_disc_labels,
         true_disc_prediction,
-        from_logits=True,
     )
 
     fake_disc_prediction = discriminator(y_pred, training=True)
-    fake_disc_labels = tf.ones_like(fake_disc_prediction)
-    fake_disc_loss = tf.keras.losses.binary_crossentropy(
+    fake_disc_labels = tf.zeros_like(fake_disc_prediction)
+    fake_disc_loss = loss_func(
         fake_disc_labels,
         fake_disc_prediction,
-        from_logits=True,
     )
 
     return (true_disc_loss + fake_disc_loss) / 2.0
 
 
-def measure_recon_loss(y_true, y_pred):
-    return tf.math.reduce_mean(
-        tf.keras.losses.mean_squared_error(y_true, y_pred), axis=(1, 2)
+def measure_recon_loss(y_true, y_pred, reduction: str = "auto"):
+    loss_func = tf.keras.losses.MeanSquaredError(reduction=reduction)
+
+    return loss_func(y_true, y_pred)
+
+
+def measure_total_loss(
+    discriminator,
+    y_true,
+    y_pred,
+    l2_weight: float = 0.999,
+    reduction: str = "auto",
+):
+    disc_loss = measure_disc_loss(
+        discriminator,
+        y_pred,
+        y_true,
+        reduction=reduction,
     )
-
-
-def measure_total_loss(discriminator, y_true, y_pred, l2_weight: float = 0.999):
-    disc_loss = measure_disc_loss(discriminator, y_pred, y_true)
-    recon_loss = measure_recon_loss(y_true, y_pred)
+    recon_loss = measure_recon_loss(
+        y_true,
+        y_pred,
+        reduction=reduction,
+    )
 
     return (recon_loss * l2_weight) + (disc_loss * (1 - l2_weight))
 
@@ -111,9 +156,16 @@ def train_step(
 ):
     with tf.GradientTape(persistent=True) as tape:
         predicted_fill = context_encoder(X, training=True)
+
+        # f, axarr = plt.subplots(2)
+        # sns.heatmap(predicted_fill[0, :, :, 0], ax=axarr[0])
+        # sns.heatmap(y[0, :, :, 0], ax=axarr[1])
+
+        # f.savefig("pred.png")
+
         # calculate simple L2 loss between predicted and true fill
         l2_loss = measure_recon_loss(y, predicted_fill)
-        disc_loss = measure_disc_loss(discriminator, predicted_fill, y)
+        disc_loss = measure_disc_loss(discriminator, y, predicted_fill)
         # calculate total loss that we'll use to update the context encoder
         total_loss = (l2_loss * l2_weight) + (disc_loss * (1 - l2_weight))
 
@@ -128,57 +180,103 @@ def train_step(
     return disc_loss, l2_loss, total_loss
 
 
+def pad_training_data(train_data: np.ndarray):
+    # pad if necessary
+    padding = 0
+    input_shape = train_data.shape
+    cur_height, cur_width = input_shape[1:3]
+    while cur_height < cur_width:
+        padding += 1
+        cur_height += 1
+    padding_zeros = np.zeros((input_shape[0], padding, input_shape[2], input_shape[3]))
+    train_data = np.concatenate((train_data, padding_zeros), axis=1)
+    return train_data
+
+
+def unpickle(file):
+    import pickle
+
+    with open(file, "rb") as fo:
+        d = pickle.load(fo, encoding="bytes")
+    return d
+
+
+def format_cifar(data: np.ndarray):
+    n_examples = data.shape[0]
+    new_data = np.zeros((n_examples, 32, 32, 3))
+    for i in np.arange(n_examples):
+        img = data[i]
+        norm_img = (img - np.amin(img)) / (np.amax(img) - np.amin(img))
+        norm_img = (2 * norm_img) - 1
+        new_data[i] = norm_img
+    return new_data
+
+
 def main(args):
-    with np.load("data/data.npz") as data:
-        train_data = data["train"]
-        train_labels = data["labels"]
+    CIFAR = False
+
+    if CIFAR:
+        (X_train, y_train), (X_test, y_test) = tf.keras.datasets.cifar10.load_data()
+
+        N = 5_000
+        X_train, y_train = format_cifar(X_train[:N]), y_train[:N]
+        X_test, y_test = format_cifar(X_test[:N]), y_test[:N]
+    else:
+        with np.load("data/data.npz") as data:
+            train_data = data["train_data"]
+            train_labels = data["train_labels"]
+
+        X_train, X_test, y_train, y_test = sklearn.model_selection.train_test_split(
+            train_data,
+            train_labels,
+            test_size=0.2,
+            shuffle=True,
+        )
 
     # split out individual rows (i.e., haplotypes) into new arrays
-    train_data = np.concatenate(train_data, axis=2)
-    train_data = np.transpose(train_data, (2, 0, 1, 3))
+    # train_data = np.concatenate(train_data, axis=2)
+    # train_data = np.transpose(train_data, (2, 0, 1, 3))
 
-    input_shape = train_data.shape
+    # train_data = pad_training_data(train_data)
 
-    X_train, X_test, y_train, y_test = sklearn.model_selection.train_test_split(
-        train_data,
-        train_labels,
-        test_size=0.2,
-        shuffle=True,
-    )
+    input_shape = X_train.shape
 
-    quarter_idx = global_vars.NUM_SNPS // 4
+    # generate a masked version of the input, along with
+    # the true values present in the mask
+    X_train_masked, X_train_true = create_image_mask(X_train)
 
-    f, axarr = plt.subplots(
-        global_vars.NUM_CHANNELS,
-        2,
-        figsize=(16, 8),
-        sharex=True,
-        sharey=True,
-    )
-    # labels = ["REF", "ALT", "Distance"]
-    for channel_i in range(global_vars.NUM_CHANNELS):
-        sub = X_test[0, :, :, channel_i].copy()
-        sns.heatmap(sub, ax=axarr[channel_i, 0], cbar=False)
-        sub[:, quarter_idx : quarter_idx * 3] = 0
-        sns.heatmap(sub, ax=axarr[channel_i, 1], cbar=False)
+    if CIFAR:
+        f, axarr = plt.subplots(1, 2, figsize=(16, 8), sharey=False)
+        I = np.random.randint(N)
+        axarr[0].imshow(X_train[I])
+        axarr[1].imshow(X_train_masked[I])
+        f.tight_layout()
+        f.savefig("orig.png", dpi=200)
+    else:
+        f, axarr = plt.subplots(
+            2, global_vars.NUM_CHANNELS, figsize=(16, 8), sharey=False
+        )
 
-    axarr[0, 0].set_title("Original")
-    axarr[0, 1].set_title("Masked")
+        for channel_i in range(global_vars.NUM_CHANNELS):
+            sns.heatmap(X_train[0, :, :, channel_i], ax=axarr[0, channel_i], cbar=False)
+            sns.heatmap(X_train_masked[0, :, :, channel_i], ax=axarr[1, channel_i], cbar=False)
 
-    f.tight_layout()
-    f.savefig("orig.png", dpi=200)
+        f.tight_layout()
+        f.savefig("orig.png", dpi=200)
 
     model = build_model(
         input_shape=input_shape[1:],
         activation="relu",
-        latent_dimensions=100,
+        latent_dimensions=1_000,
     )
 
-    disc = context_encoder.DiscriminatorOneHot()
+    quarter_idx = global_vars.NUM_SNPS // 4
+
+    disc = context_encoder.Discriminator()
     disc.build_graph(
         (
             1,
-            4,
+            global_vars.NUM_SNPS // 2,
             global_vars.NUM_SNPS // 2,
             global_vars.NUM_CHANNELS,
         )
@@ -186,8 +284,9 @@ def main(args):
     disc.discriminator.summary()
 
     # context encoder LR is 10x higher
-    ce_optimizer = build_optimizer(learning_rate=1e-3)
-    disc_optimizer = build_optimizer(learning_rate=1e-4)
+    LR = 2e-4
+    ce_optimizer = build_optimizer(learning_rate=LR)
+    disc_optimizer = build_optimizer(learning_rate=LR / 10.0)
 
     EPOCHS = 20
     BATCH_SIZE = 64
@@ -198,107 +297,100 @@ def main(args):
         for step in range(X_train.shape[0] // BATCH_SIZE):
             start_idx = BATCH_SIZE * step
             end_idx = BATCH_SIZE * (step + 1)
-            X_batch = X_train[start_idx:end_idx].copy()
-            y_batch = X_train[start_idx:end_idx].copy()
-
-            # subset y data to only include the middle chunk of image
-            y_batch = y_batch[
-                :, :, quarter_idx : quarter_idx * 3, :
-            ]
 
             disc_loss, recon_loss, total_loss = train_step(
                 model,
                 disc,
                 ce_optimizer,
                 disc_optimizer,
-                X_batch,
-                y_batch,
+                X_train_masked[start_idx:end_idx],
+                X_train_true[start_idx:end_idx],
             )
+        if epoch % 5 == 0:
+            print(disc_loss.numpy())
+            print(recon_loss.numpy())
+
+        X_test_masked, X_test_true = create_image_mask(X_test)
 
         # check out the model at each step
-        predictions = model.predict(X_test)
+        predictions = model.predict(X_test_masked)
 
         # measure test loss
-        disc_loss_test = tf.math.reduce_sum(
-            measure_disc_loss(
-                disc,
-                predictions,
-                X_test[
-                    :, :, quarter_idx : quarter_idx * 3, :
-                ],
-            )
-        ).numpy()
-        recon_loss_test = tf.math.reduce_sum(
-            measure_recon_loss(
-                predictions,
-                X_test[
-                    :, :, quarter_idx : quarter_idx * 3, :
-                ],
-            )
-        ).numpy()
+        disc_loss_test = measure_disc_loss(disc, X_test_true, predictions)
+        recon_loss_test = measure_recon_loss(X_test_true, predictions)
+        total_loss_test = measure_total_loss(disc, X_test_true, predictions)
 
-        for loss, label in zip(
-            (disc_loss, recon_loss, total_loss),
-            ("disc", "recon", "total"),
+        for loss, label, group in zip(
+            (
+                disc_loss,
+                recon_loss,
+                total_loss,
+                disc_loss_test,
+                recon_loss_test,
+                total_loss_test,
+            ),
+            ("disc", "recon", "total", "disc", "recon", "total"),
+            (
+                "training",
+                "training",
+                "training",
+                "validation",
+                "validation",
+                "validation",
+            ),
         ):
             res.append(
                 {
                     "epoch": epoch,
-                    "loss": tf.math.reduce_sum(loss).numpy(),
+                    "loss": loss.numpy(),
                     "loss_kind": label,
-                    "group": "training",
+                    "group": group,
                 }
             )
-        res.append(
-            {
-                "epoch": epoch,
-                "loss": disc_loss_test,
-                "loss_kind": "disc",
-                "group": "validation",
-            }
-        )
-        res.append(
-            {
-                "epoch": epoch,
-                "loss": recon_loss_test,
-                "loss_kind": "recon",
-                "group": "validation",
-            }
-        )
 
-        f, axarr = plt.subplots(
-            global_vars.NUM_CHANNELS, 2, figsize=(16, 8), sharey=True
-        )
-        for channel_i in range(global_vars.NUM_CHANNELS):
-            sub = X_test[0, :, :, channel_i].copy()
-            sns.heatmap(sub, ax=axarr[channel_i, 0], cbar=False)
-            sub[:, quarter_idx : quarter_idx * 3] = 0
-            sub[
-                :, quarter_idx : quarter_idx * 3
-            ] += predictions[0, :, :, channel_i]
-            sns.heatmap(sub, ax=axarr[channel_i, 1], cbar=False)
-            # for i in (0, 1):
-            # axarr[channel_i, i].set_yticklabels(["A", "T", "C", "G"])
-            # axarr[channel_i, i].set_ylabel(labels[channel_i], rotation=0)
-            # axarr[channel_i, i].set_xlabel("SNP index")
+        if epoch % 5 == 0:
+            if CIFAR:
+                f, axarr = plt.subplots(2, 4, figsize=(28, 15), sharey=True)
+                for plot_idx, idx in enumerate(
+                    np.random.randint(X_test.shape[0], size=4)
+                ):
+                    # for channel_i in range(global_vars.NUM_CHANNELS):
+                    axarr[0, plot_idx].imshow(X_test[idx, :, :, :])
+                    sub = X_test_masked[idx, :, :, :]
+                    sub[
+                        quarter_idx : quarter_idx * 3, quarter_idx : quarter_idx * 3
+                    ] += predictions[idx, :, :, :]
+                    axarr[1, plot_idx].imshow(sub)
 
-        axarr[0, 0].set_title("Original")
-        axarr[0, 1].set_title("Masked")
+                f.tight_layout()
+                f.savefig("preds.png", dpi=200)
+            else:
+                f, axarr = plt.subplots(global_vars.NUM_CHANNELS, 3, figsize=(28, 15), sharey=True)
+                I = np.random.randint(X_test.shape[0])
+                for channel_i in range(global_vars.NUM_CHANNELS):
+                    # plot original image
+                    sns.heatmap(X_test[I, :, :, channel_i], ax=axarr[channel_i, 0], cbar=False, vmin=-1, vmax=1)
+                    sub = X_test_masked[I, :, :, channel_i]
+                    # plot masked image
+                    sns.heatmap(sub, ax=axarr[channel_i, 1], cbar=False, vmin=-1, vmax=1)
+                    sub[quarter_idx : quarter_idx * 3, quarter_idx : quarter_idx * 3] += predictions[I, :, :, channel_i]
+                    # plot filled in image
+                    sns.heatmap(sub, ax=axarr[channel_i, 2], cbar=False, vmin=-1, vmax=1)
 
-        f.tight_layout()
-        f.savefig("preds.png", dpi=200)
+                f.tight_layout()
+                f.savefig("preds.png", dpi=200)
 
-    # loss_dist = measure_total_loss(disc, X_test[:, :, quarter_idx : quarter_idx * 3, :], predictions)
-    loss_dist = measure_recon_loss(
-        X_test[:, :, quarter_idx : quarter_idx * 3, :],
-        predictions,
+    predictions = model.predict(X_test_masked)
+
+    loss_dist = tf.reduce_sum(
+        measure_recon_loss(
+            X_test_true,
+            predictions,
+            reduction="none",
+        ),
+        axis=(1, 2),
     )
     loss = []
-
-    fpr, tpr, thresholds = roc_curve(y_test, loss_dist.numpy())
-    f, ax = plt.subplots()
-    ax.plot(fpr, tpr)
-    f.savefig("roc.png")
 
     f, ax = plt.subplots()
 
@@ -307,14 +399,21 @@ def main(args):
         for i in label_idxs:
             loss.append({"label": label, "loss": loss_dist.numpy()[i]})
     loss = pd.DataFrame(loss)
-    sns.boxplot(data=loss, x="label", y="loss", ax=ax, color="white")
+    sns.boxplot(data=loss, x="label", y="loss", ax=ax)
     sns.stripplot(data=loss, x="label", y="loss", ax=ax)
     f.savefig("dist.png", dpi=200)
 
+    # f, ax = plt.subplots()
+    # fpr, tpr, thresholds = roc_curve(y_test, loss_dist.numpy())
+    # f, ax = plt.subplots()
+    # ax.plot(fpr, tpr)
+    # f.savefig("roc.png")
+
     res = pd.DataFrame(res)
 
-    g = sns.FacetGrid(data=res, col="group", sharey=False)
-    g.map(sns.lineplot, "epoch", "loss", "loss_kind")
+    g = sns.FacetGrid(data=res, col="loss_kind", sharey=False)
+    g.map(sns.lineplot, "epoch", "loss", "group")
+    g.add_legend()
     f.tight_layout()
     g.savefig("loss.png", dpi=200)
 
