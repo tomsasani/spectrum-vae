@@ -23,7 +23,7 @@ from tensorflow.keras.datasets import fashion_mnist
 
 def create_image_mask(X: np.ndarray):
     # get shape of array
-    batch_size, n_nucs, n_snps, n_channels = X.shape
+    batch_size, n_haps, n_snps, n_channels = X.shape
 
     # find middle half of image and define using indices
     quarter_i = n_snps // 4
@@ -40,6 +40,51 @@ def create_image_mask(X: np.ndarray):
     X_[:, i:j, i:j, :] = 0
 
     return X_, y_
+
+
+def batch_random_mask(X: np.ndarray, pct_mask: float = 0.5):
+    # get shape of array
+    batch_size, n_haps, n_snps, n_channels = X.shape
+
+    X_new, mask_arr = np.zeros(X.shape), np.zeros(X.shape)
+
+    for i in np.arange(batch_size):
+        i_masked, i_mask = create_random_image_mask(X[i], pct_mask=pct_mask)
+        X_new[i] = i_masked
+        mask_arr[i] = i_mask
+    return X_new, mask_arr
+
+
+def create_random_image_mask(X: np.ndarray, pct_mask: float = 0.5):
+    # get shape of array
+    n_haps, n_snps, n_channels = X.shape
+
+    assert n_haps == n_snps
+
+    # initialize mask, where 1 indicates masked value
+    mask = np.zeros(X.shape)
+
+    # define random blocks that are each 1/16 of the width of the image
+    segment_width = n_snps // 8
+
+    # while the total masked area is less than the desired amount
+    while (np.sum(mask[:, :, 0]) / (n_snps ** 2)) < pct_mask:
+        # pick a random location in the image where we'll initialize
+        # the "bottom left" of the segment mask.
+        rand_x = np.random.randint(n_snps - segment_width)
+        rand_y = np.random.randint(n_snps - segment_width)
+
+        mask[rand_x:rand_x + segment_width, rand_y:rand_y + segment_width, :] = 1
+
+    # f, (ax1, ax2) = plt.subplots(2)
+    # sns.heatmap(X[:, :, 0], ax=ax1)
+    # sns.heatmap(X[:, :, 0] * (1 - mask[:, :, 0]), ax=ax2)
+    # f.savefig("masked.png")
+
+    X_masked = X * (1 - mask)
+
+    return X_masked, mask
+    
 
 
 def build_model(
@@ -191,14 +236,6 @@ def pad_training_data(train_data: np.ndarray):
     padding_zeros = np.zeros((input_shape[0], padding, input_shape[2], input_shape[3]))
     train_data = np.concatenate((train_data, padding_zeros), axis=1)
     return train_data
-
-
-def unpickle(file):
-    import pickle
-
-    with open(file, "rb") as fo:
-        d = pickle.load(fo, encoding="bytes")
-    return d
 
 
 def format_cifar(data: np.ndarray):
