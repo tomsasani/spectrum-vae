@@ -262,7 +262,7 @@ def main():
     if CIFAR:
         (X_train, y_train), (X_test, y_test) = tf.keras.datasets.cifar10.load_data()
 
-        N = 1_000
+        N = 500
         X_train, y_train = format_cifar(X_train[:N]), y_train[:N]
         X_test, y_test = format_cifar(X_test[:N]), y_test[:N]
     else:
@@ -397,17 +397,17 @@ def main():
                 }
             )
 
-        if epoch % 1 == 0:
+        if epoch % 5 == 0:
             if CIFAR:
-                f, axarr = plt.subplots(2, 4, figsize=(28, 15), sharey=True)
+                f, axarr = plt.subplots(3, 4, figsize=(28, 20), sharey=True)
                 for plot_idx, idx in enumerate(
                     np.random.randint(X_test.shape[0], size=4)
                 ):
                     # for channel_i in range(global_vars.NUM_CHANNELS):
                     axarr[0, plot_idx].imshow(X_test[idx, :, :, :])
-                    sub = X_test[idx, :, :, :] * (1 - X_test_mask[idx, :, :, :])
-                    sub += predictions[idx, :, :, :]
-                    axarr[1, plot_idx].imshow(sub)
+                    axarr[1, plot_idx].imshow(X_test[idx, :, :, :] * (1 - X_test_mask[idx, :, :, :]))
+                    # sub += predictions[idx, :, :, :]
+                    axarr[2, plot_idx].imshow(predictions[idx, :, :, :])
 
                 f.tight_layout()
                 f.savefig("preds.png", dpi=200)
@@ -425,19 +425,19 @@ def main():
                         vmin=-1,
                         vmax=1,
                     )
-                    sub = X_test[I, :, :, channel_i] * (1 - X_test_mask[I, :, :, channel_i])
+                    #sub = X_test[I, :, :, channel_i] * (1 - X_test_mask[I, :, :, channel_i])
                     # plot masked image
                     sns.heatmap(
-                        sub,
+                        X_test[I, :, :, channel_i] * (1 - X_test_mask[I, :, :, channel_i]),
                         ax=axarr[channel_i, 1],
                         cbar=False,
                         vmin=-1,
                         vmax=1,
                     )
-                    sub_ = sub + predictions[I, :, :, channel_i]
+                    #sub_ = sub + predictions[I, :, :, channel_i]
                     # plot filled in image
                     sns.heatmap(
-                        sub_,
+                        predictions[I, :, :, channel_i],
                         ax=axarr[channel_i, 2],
                         cbar=False,
                         vmin=-1,
