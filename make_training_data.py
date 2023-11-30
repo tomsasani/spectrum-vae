@@ -7,7 +7,7 @@ import seaborn as sns
 import numpy as np
 
 sim = simulation.simulate_exp
-N = 5_000
+N = 1_000
 
 normal_root_dist = np.array([0.25] * 4)
 

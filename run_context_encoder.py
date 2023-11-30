@@ -42,20 +42,19 @@ def create_image_mask(X: np.ndarray):
     return X_, y_
 
 
-def batch_random_mask(X: np.ndarray, pct_mask: float = 0.5):
+def batch_random_mask(X: np.ndarray, pct_mask: float = 0.25):
     # get shape of array
     batch_size, n_haps, n_snps, n_channels = X.shape
 
-    X_new, mask_arr = np.zeros(X.shape), np.zeros(X.shape)
+    mask_arr = np.zeros(X.shape)
 
     for i in np.arange(batch_size):
-        i_masked, i_mask = create_random_image_mask(X[i], pct_mask=pct_mask)
-        X_new[i] = i_masked
+        i_mask = create_random_image_mask(X[i], pct_mask=pct_mask)
         mask_arr[i] = i_mask
-    return X_new, mask_arr
+    return mask_arr
 
 
-def create_random_image_mask(X: np.ndarray, pct_mask: float = 0.5):
+def create_random_image_mask(X: np.ndarray, pct_mask: float = 0.25):
     # get shape of array
     n_haps, n_snps, n_channels = X.shape
 
@@ -65,26 +64,25 @@ def create_random_image_mask(X: np.ndarray, pct_mask: float = 0.5):
     mask = np.zeros(X.shape)
 
     # define random blocks that are each 1/16 of the width of the image
-    segment_width = n_snps // 8
+    segment_width = n_snps // 4
+
+    mask[segment_width:segment_width*3, segment_width:segment_width*3, :] = 1
 
     # while the total masked area is less than the desired amount
-    while (np.sum(mask[:, :, 0]) / (n_snps ** 2)) < pct_mask:
-        # pick a random location in the image where we'll initialize
-        # the "bottom left" of the segment mask.
-        rand_x = np.random.randint(n_snps - segment_width)
-        rand_y = np.random.randint(n_snps - segment_width)
+    # while (np.sum(mask[:, :, 0]) / (n_snps**2)) < pct_mask:
+    #     # pick a random location in the image where we'll initialize
+    #     # the "bottom left" of the segment mask.
+    #     rand_x = np.random.randint(n_snps - segment_width)
+    #     rand_y = np.random.randint(n_snps - segment_width)
 
-        mask[rand_x:rand_x + segment_width, rand_y:rand_y + segment_width, :] = 1
+    #     mask[rand_x : rand_x + segment_width, rand_y : rand_y + segment_width, :] = 1
 
     # f, (ax1, ax2) = plt.subplots(2)
     # sns.heatmap(X[:, :, 0], ax=ax1)
     # sns.heatmap(X[:, :, 0] * (1 - mask[:, :, 0]), ax=ax2)
     # f.savefig("masked.png")
 
-    X_masked = X * (1 - mask)
-
-    return X_masked, mask
-    
+    return mask
 
 
 def build_model(
@@ -162,16 +160,21 @@ def measure_disc_loss(discriminator, y_true, y_pred, reduction: str = "auto"):
     return (true_disc_loss + fake_disc_loss) / 2.0
 
 
-def measure_recon_loss(y_true, y_pred, reduction: str = "auto"):
+def measure_recon_loss(
+    y_true,
+    y_pred,
+    mask,
+    reduction: str = "auto",
+):
     loss_func = tf.keras.losses.MeanSquaredError(reduction=reduction)
-
-    return loss_func(y_true, y_pred)
+    return loss_func(y_true, y_pred, sample_weight=mask[:, :, :, 0])
 
 
 def measure_total_loss(
     discriminator,
     y_true,
     y_pred,
+    mask,
     l2_weight: float = 0.999,
     reduction: str = "auto",
 ):
@@ -184,6 +187,7 @@ def measure_total_loss(
     recon_loss = measure_recon_loss(
         y_true,
         y_pred,
+        mask,
         reduction=reduction,
     )
 
@@ -196,25 +200,28 @@ def train_step(
     ce_opt,
     disc_opt,
     X: np.ndarray,
-    y: np.ndarray,
+    mask: np.ndarray,
     l2_weight: float = 0.999,
 ):
     with tf.GradientTape(persistent=True) as tape:
-        predicted_fill = context_encoder(X, training=True)
+        # per eq. 1, we run the context encoder (i.e., generator) on
+        # the input image X, after X is multiplied by the inverse of
+        # the image mask. the original mask should contain 1s where pixels
+        # were dropped and 0s where they were kept, so the inverse will contain
+        # 0s at dropped pixels. in other words, we run the context encoder
+        # on the original image with the masked pixels removed.
 
-        # f, axarr = plt.subplots(2)
-        # sns.heatmap(predicted_fill[0, :, :, 0], ax=axarr[0])
-        # sns.heatmap(y[0, :, :, 0], ax=axarr[1])
+        predicted_fill = context_encoder(X * (1 - mask), training=True)
 
-        # f.savefig("pred.png")
-
-        # calculate simple L2 loss between predicted and true fill
-        l2_loss = measure_recon_loss(y, predicted_fill)
-        disc_loss = measure_disc_loss(discriminator, y, predicted_fill)
+        # calculate simple L2 loss between predicted and true fill. we weight
+        # the L2 loss by the dropped pixels.
+        l2_loss = measure_recon_loss(X, predicted_fill, mask=mask)
+        disc_loss = measure_disc_loss(discriminator, X, predicted_fill)
         # calculate total loss that we'll use to update the context encoder
         total_loss = (l2_loss * l2_weight) + (disc_loss * (1 - l2_weight))
 
-    # update discriminator using discriminator loss (so that discriminator gets better)
+    # update discriminator using discriminator loss (so
+    # that discriminator gets better)
     disc_grads = tape.gradient(disc_loss, discriminator.trainable_variables)
     disc_opt.apply_gradients(zip(disc_grads, discriminator.trainable_variables))
 
@@ -249,13 +256,13 @@ def format_cifar(data: np.ndarray):
     return new_data
 
 
-def main(args):
-    CIFAR = False
+def main():
+    CIFAR = True
 
     if CIFAR:
         (X_train, y_train), (X_test, y_test) = tf.keras.datasets.cifar10.load_data()
 
-        N = 5_000
+        N = 1_000
         X_train, y_train = format_cifar(X_train[:N]), y_train[:N]
         X_test, y_test = format_cifar(X_test[:N]), y_test[:N]
     else:
@@ -280,13 +287,14 @@ def main(args):
 
     # generate a masked version of the input, along with
     # the true values present in the mask
-    X_train_masked, X_train_true = create_image_mask(X_train)
+    X_train_mask = batch_random_mask(X_train, pct_mask=0.05)
+    X_test_mask = batch_random_mask(X_test, pct_mask=0.05)
 
     if CIFAR:
         f, axarr = plt.subplots(1, 2, figsize=(16, 8), sharey=False)
         I = np.random.randint(N)
         axarr[0].imshow(X_train[I])
-        axarr[1].imshow(X_train_masked[I])
+        axarr[1].imshow(X_train[I] * (1 - X_train_mask[I]))
         f.tight_layout()
         f.savefig("orig.png", dpi=200)
     else:
@@ -295,8 +303,16 @@ def main(args):
         )
 
         for channel_i in range(global_vars.NUM_CHANNELS):
-            sns.heatmap(X_train[0, :, :, channel_i], ax=axarr[0, channel_i], cbar=False)
-            sns.heatmap(X_train_masked[0, :, :, channel_i], ax=axarr[1, channel_i], cbar=False)
+            sns.heatmap(
+                X_train[0, :, :, channel_i],
+                ax=axarr[0, channel_i],
+                cbar=False,
+            )
+            sns.heatmap(
+                X_train[0, :, :, channel_i] * (1 - X_train_mask[0, :, :, channel_i]),
+                ax=axarr[1, channel_i],
+                cbar=False,
+            )
 
         f.tight_layout()
         f.savefig("orig.png", dpi=200)
@@ -307,14 +323,12 @@ def main(args):
         latent_dimensions=1_000,
     )
 
-    quarter_idx = global_vars.NUM_SNPS // 4
-
     disc = context_encoder.Discriminator()
     disc.build_graph(
         (
             1,
-            global_vars.NUM_SNPS // 2,
-            global_vars.NUM_SNPS // 2,
+            global_vars.NUM_HAPLOTYPES,
+            global_vars.NUM_SNPS,
             global_vars.NUM_CHANNELS,
         )
     )
@@ -325,7 +339,7 @@ def main(args):
     ce_optimizer = build_optimizer(learning_rate=LR)
     disc_optimizer = build_optimizer(learning_rate=LR / 10.0)
 
-    EPOCHS = 20
+    EPOCHS = 50
     BATCH_SIZE = 64
 
     res = []
@@ -340,22 +354,20 @@ def main(args):
                 disc,
                 ce_optimizer,
                 disc_optimizer,
-                X_train_masked[start_idx:end_idx],
-                X_train_true[start_idx:end_idx],
+                X_train[start_idx:end_idx],
+                X_train_mask[start_idx:end_idx],
             )
-        if epoch % 5 == 0:
+        if epoch % 1 == 0:
             print(disc_loss.numpy())
             print(recon_loss.numpy())
 
-        X_test_masked, X_test_true = create_image_mask(X_test)
-
         # check out the model at each step
-        predictions = model.predict(X_test_masked)
+        predictions = model.predict(X_test * (1 - X_test_mask))
 
         # measure test loss
-        disc_loss_test = measure_disc_loss(disc, X_test_true, predictions)
-        recon_loss_test = measure_recon_loss(X_test_true, predictions)
-        total_loss_test = measure_total_loss(disc, X_test_true, predictions)
+        disc_loss_test = measure_disc_loss(disc, X_test, predictions)
+        recon_loss_test = measure_recon_loss(X_test, predictions, X_test_mask)
+        total_loss_test = measure_total_loss(disc, X_test, predictions, X_test_mask)
 
         for loss, label, group in zip(
             (
@@ -385,7 +397,7 @@ def main(args):
                 }
             )
 
-        if epoch % 5 == 0:
+        if epoch % 1 == 0:
             if CIFAR:
                 f, axarr = plt.subplots(2, 4, figsize=(28, 15), sharey=True)
                 for plot_idx, idx in enumerate(
@@ -393,36 +405,55 @@ def main(args):
                 ):
                     # for channel_i in range(global_vars.NUM_CHANNELS):
                     axarr[0, plot_idx].imshow(X_test[idx, :, :, :])
-                    sub = X_test_masked[idx, :, :, :]
-                    sub[
-                        quarter_idx : quarter_idx * 3, quarter_idx : quarter_idx * 3
-                    ] += predictions[idx, :, :, :]
+                    sub = X_test[idx, :, :, :] * (1 - X_test_mask[idx, :, :, :])
+                    sub += predictions[idx, :, :, :]
                     axarr[1, plot_idx].imshow(sub)
 
                 f.tight_layout()
                 f.savefig("preds.png", dpi=200)
             else:
-                f, axarr = plt.subplots(global_vars.NUM_CHANNELS, 3, figsize=(28, 15), sharey=True)
+                f, axarr = plt.subplots(
+                    global_vars.NUM_CHANNELS, 3, figsize=(28, 15), sharey=True
+                )
                 I = np.random.randint(X_test.shape[0])
                 for channel_i in range(global_vars.NUM_CHANNELS):
                     # plot original image
-                    sns.heatmap(X_test[I, :, :, channel_i], ax=axarr[channel_i, 0], cbar=False, vmin=-1, vmax=1)
-                    sub = X_test_masked[I, :, :, channel_i]
+                    sns.heatmap(
+                        X_test[I, :, :, channel_i],
+                        ax=axarr[channel_i, 0],
+                        cbar=False,
+                        vmin=-1,
+                        vmax=1,
+                    )
+                    sub = X_test[I, :, :, channel_i] * (1 - X_test_mask[I, :, :, channel_i])
                     # plot masked image
-                    sns.heatmap(sub, ax=axarr[channel_i, 1], cbar=False, vmin=-1, vmax=1)
-                    sub[quarter_idx : quarter_idx * 3, quarter_idx : quarter_idx * 3] += predictions[I, :, :, channel_i]
+                    sns.heatmap(
+                        sub,
+                        ax=axarr[channel_i, 1],
+                        cbar=False,
+                        vmin=-1,
+                        vmax=1,
+                    )
+                    sub_ = sub + predictions[I, :, :, channel_i]
                     # plot filled in image
-                    sns.heatmap(sub, ax=axarr[channel_i, 2], cbar=False, vmin=-1, vmax=1)
+                    sns.heatmap(
+                        sub_,
+                        ax=axarr[channel_i, 2],
+                        cbar=False,
+                        vmin=-1,
+                        vmax=1,
+                    )
 
                 f.tight_layout()
                 f.savefig("preds.png", dpi=200)
 
-    predictions = model.predict(X_test_masked)
+    predictions = model.predict(X_test * (1 - X_test_mask))
 
     loss_dist = tf.reduce_sum(
         measure_recon_loss(
-            X_test_true,
+            X_test,
             predictions,
+            X_test_mask,
             reduction="none",
         ),
         axis=(1, 2),
@@ -460,4 +491,4 @@ if __name__ == "__main__":
     p.add_argument("-run_sweep", action="store_true")
     p.add_argument("-search_size", type=int, default=20)
     args = p.parse_args()
-    main(args)
+    main()
