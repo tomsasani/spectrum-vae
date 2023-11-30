@@ -25,6 +25,7 @@ for fi in range(1, n_filters):
 # define filter sizes for each of the n - 1 convolutional layers
 FILTER_SIZES = [f // 1 for f in FILTER_SIZES]
 
+
 class ContextEncoderOneHot(Model):
     def __init__(
         self,
@@ -254,19 +255,22 @@ class ContextEncoder(Model):
         # decoder_.append(layers.BatchNormalization())
 
         # convolve back to final feature map size
-        decoder_.append(
-            layers.Conv2DTranspose(
-                FILTER_SIZES[-1],
-                (kernel_size, kernel_size),
-                activation="relu",
-                padding="valid",
-                input_shape=(1, 1, latent_dimensions),
-            ),
+        decoder_.extend(
+            [
+                layers.Conv2DTranspose(
+                    FILTER_SIZES[-1],
+                    (kernel_size, kernel_size),
+                    activation="relu",
+                    padding="valid",
+                    input_shape=(1, 1, latent_dimensions),
+                ),
+                layers.BatchNormalization(),
+            ]
         )
 
         # loop over filter sizes in reverse, skipping final
         # layer.
-        for filter_size in FILTER_SIZES[::-1][1:]:
+        for filter_size in FILTER_SIZES[::-1][1:-1]:
             # block is a convolution + maxpool
             block = [
                 layers.Conv2DTranspose(
@@ -276,6 +280,7 @@ class ContextEncoder(Model):
                     activation="relu",
                     padding="same",
                 ),
+                layers.BatchNormalization(),
             ]
             decoder_.extend(block)
 
@@ -314,8 +319,8 @@ class Discriminator(Model):
     def __init__(
         self,
         input_shape: Tuple[int] = (
-            global_vars.NUM_HAPLOTYPES,
-            global_vars.NUM_SNPS,
+            global_vars.NUM_HAPLOTYPES // 2,
+            global_vars.NUM_SNPS // 2,
             global_vars.NUM_CHANNELS,
         ),
         kernel_size: int = 4,
@@ -324,7 +329,7 @@ class Discriminator(Model):
 
         disc_ = [layers.Input(shape=input_shape)]
 
-        for filter_size in FILTER_SIZES:
+        for filter_size in FILTER_SIZES[1:]:
             block = [
                 layers.Conv2D(
                     filter_size,
@@ -338,25 +343,17 @@ class Discriminator(Model):
             disc_.extend(block)
 
         final_block = [
-                layers.Conv2D(
-                    1,
-                    (kernel_size, kernel_size),
-                    strides=(1, 1),
-                    padding="valid",
-                    activation="sigmoid",
-                ),
-            ]
+            layers.Conv2D(
+                1,
+                (kernel_size, kernel_size),
+                strides=(1, 1),
+                padding="valid",
+                activation="sigmoid",
+            ),
+        ]
         disc_.extend(final_block)
 
         disc_.append(layers.Flatten())
-
-        # final layer collapses to a single value
-        # disc_.append(
-        #     layers.Dense(
-        #         1,
-        #         activation="sigmoid",
-        #     )
-        # )
 
         self.discriminator = tf.keras.Sequential(disc_)
 
