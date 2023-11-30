@@ -410,7 +410,7 @@ def main():
                     axarr[2, plot_idx].imshow(predictions[idx, :, :, :])
 
                 f.tight_layout()
-                f.savefig("preds.png", dpi=200)
+                f.savefig(f"img/preds.{epoch}.png", dpi=200)
             else:
                 f, axarr = plt.subplots(
                     global_vars.NUM_CHANNELS, 3, figsize=(28, 15), sharey=True
@@ -445,7 +445,7 @@ def main():
                     )
 
                 f.tight_layout()
-                f.savefig("preds.png", dpi=200)
+                f.savefig(f"img/preds.{epoch}.png", dpi=200)
 
     predictions = model.predict(X_test * (1 - X_test_mask))
 
