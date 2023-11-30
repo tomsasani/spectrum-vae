@@ -50,12 +50,8 @@ def sort_min_diff(X: np.ndarray):
     this problem is NP, so here we use a nearest neighbors approx.  it's not perfect, but it's fast and generally performs ok.
     assumes your input matrix is a numpy array'''
     # reduce to 2 dims
-    assert len(X.shape) == 3
     X_copy = np.copy(X)
     X_copy[X_copy < 0] = 0
-    if X.shape[-1] == 6:
-        X_copy = np.sum(X_copy, axis=2)
-    else: X_copy = X_copy[:, :, 0]
     mb = NearestNeighbors(n_neighbors=len(X_copy), metric='manhattan').fit(X_copy)
     v = mb.kneighbors(X_copy)
     smallest = np.argmin(v[0].sum(axis=1))

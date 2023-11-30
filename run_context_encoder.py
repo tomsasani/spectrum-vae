@@ -54,12 +54,26 @@ def batch_mask(X: np.ndarray, pct_mask: float = 0.25):
 
     X_masked_batch = np.zeros(X.shape)
     X_true_batch = np.zeros((batch_size, mask_dim, mask_dim, n_channels))
-    print (mask_dim)
+
     for i in np.arange(batch_size):
         X_masked, X_true = create_image_mask(X[i])
         X_masked_batch[i] = X_masked
         X_true_batch[i] = X_true
     return X_masked_batch, X_true_batch
+
+def batch_sort(X: np.ndarray):
+    batch_size, n_haps, n_snps, n_channels = X.shape
+
+    X_new = np.zeros(X.shape)
+    for batch_i in np.arange(batch_size):
+        orig_X = X[batch_i]
+        # get indices along which to sort haplotypes.
+        # just use first channel without distances
+        sorted_hap_idxs = util.sort_min_diff(orig_X[:, :, 0])
+        orig_X_sorted = orig_X[sorted_hap_idxs, :, :]
+        X_new[batch_i] = orig_X_sorted
+    return X_new
+
 
 
 def build_model(
@@ -245,6 +259,8 @@ def main():
             train_data = data["train_data"]
             train_labels = data["train_labels"]
 
+        train_data = batch_sort(train_data)
+
         X_train, X_test, y_train, y_test = sklearn.model_selection.train_test_split(
             train_data,
             train_labels,
@@ -262,13 +278,14 @@ def main():
 
     # generate a masked version of the input, along with
     # the true values present in the mask
-    X_masked, X_true = batch_mask(X_train, pct_mask=0.25)
+    X_train_masked, X_train_true = batch_mask(X_train, pct_mask=0.25)
+    X_test_masked, X_test_true = batch_mask(X_test, pct_mask=0.25)
 
     if CIFAR:
         f, axarr = plt.subplots(1, 2, figsize=(16, 8), sharey=False)
         I = np.random.randint(X_train.shape[0])
         axarr[0].imshow(X_train[I])
-        axarr[1].imshow(X_masked[I])
+        axarr[1].imshow(X_train_masked[I])
         f.tight_layout()
         f.savefig("orig.png", dpi=200)
     else:
@@ -283,7 +300,7 @@ def main():
                 cbar=True,
             )
             sns.heatmap(
-                X_masked[0, :, :, channel_i],
+                X_train_masked[0, :, :, channel_i],
                 ax=axarr[1, channel_i],
                 cbar=True,
             )
@@ -294,7 +311,7 @@ def main():
     model = build_model(
         input_shape=input_shape[1:],
         activation="relu",
-        latent_dimensions=1_000,
+        latent_dimensions=4_000,
     )
 
     disc = context_encoder.Discriminator()
@@ -308,10 +325,10 @@ def main():
     )
     disc.discriminator.summary()
 
-    # context encoder LR is 10x higher
+    # context encoder LR is 10x higher than discriminator
     LR = 2e-4
-    ce_optimizer = build_optimizer(learning_rate=LR)
-    disc_optimizer = build_optimizer(learning_rate=LR / 10)
+    ce_optimizer = build_optimizer(learning_rate=LR * 10)
+    disc_optimizer = build_optimizer(learning_rate=LR)
 
     EPOCHS = 50
     BATCH_SIZE = 64
@@ -328,20 +345,24 @@ def main():
                 disc,
                 ce_optimizer,
                 disc_optimizer,
-                X_masked[start_idx:end_idx],
-                X_true[start_idx:end_idx],
+                X_train_masked[start_idx:end_idx],
+                X_train_true[start_idx:end_idx],
             )
-        if epoch % 1 == 0:
-            print(disc_loss.numpy())
-            print(recon_loss.numpy())
+        
 
         # check out the model at each step
-        predictions = model.predict(X_masked)
+        predictions = model.predict(X_test_masked)
 
         # measure test loss
-        disc_loss_test = measure_disc_loss(disc, X_true, predictions)
-        recon_loss_test = measure_recon_loss(X_true, predictions)
-        total_loss_test = measure_total_loss(disc, X_true, predictions)
+        disc_loss_test = measure_disc_loss(disc, X_test_true, predictions)
+        recon_loss_test = measure_recon_loss(X_test_true, predictions)
+        total_loss_test = measure_total_loss(disc, X_test_true, predictions)
+
+        print(f"Discriminator training loss: {disc_loss.numpy()}")
+        print(f"L2 training loss: {recon_loss.numpy()}")
+
+        print(f"Discriminator validation loss: {disc_loss_test.numpy()}")
+        print(f"L2 validation loss: {recon_loss_test.numpy()}")
 
         for loss, label, group in zip(
             (
@@ -379,9 +400,11 @@ def main():
                 ):
                     # for channel_i in range(global_vars.NUM_CHANNELS):
                     axarr[0, plot_idx].imshow(X_test[idx, :, :, :])
-                    axarr[1, plot_idx].imshow(X_masked[idx, :, :, :])
-                    # sub += predictions[idx, :, :, :]
-                    axarr[2, plot_idx].imshow(X_masked[idx, :, :, :] + predictions[idx, :, :, :])
+                    sub = X_test_masked[idx, :, :, :]
+                    axarr[1, plot_idx].imshow(sub)
+                    pred_dims = predictions.shape[1] // 2
+                    sub[pred_dims:pred_dims * 3, pred_dims:pred_dims * 3, :] += predictions[idx, :, :, :]
+                    axarr[2, plot_idx].imshow(sub)
 
                 f.tight_layout()
                 f.savefig(f"img/preds.{epoch}.png", dpi=200)
@@ -400,7 +423,7 @@ def main():
                         vmax=1,
                     )
                     # plot masked image
-                    sub = X_masked[I, :, :, channel_i]
+                    sub = X_test_masked[I, :, :, channel_i]
                     sns.heatmap(
                         sub,
                         ax=axarr[channel_i, 1],
@@ -424,9 +447,9 @@ def main():
 
     predictions = model.predict(X_test_masked)
 
-    loss_dist = tf.reduce_sum(
+    loss_dist = tf.reduce_mean(
         measure_recon_loss(
-            X_test,
+            X_test_true,
             predictions,
             reduction="none",
         ),
@@ -434,16 +457,16 @@ def main():
     )
     loss = []
 
-    f, ax = plt.subplots()
+    # f, ax = plt.subplots()
 
-    for label in np.unique(y_test):
-        label_idxs = np.where(y_test == label)[0]
-        for i in label_idxs:
-            loss.append({"label": label, "loss": loss_dist.numpy()[i]})
-    loss = pd.DataFrame(loss)
-    sns.boxplot(data=loss, x="label", y="loss", ax=ax)
-    sns.stripplot(data=loss, x="label", y="loss", ax=ax)
-    f.savefig("dist.png", dpi=200)
+    # for label in np.unique(y_test):
+    #     label_idxs = np.where(y_test == label)[0]
+    #     for i in label_idxs:
+    #         loss.append({"label": str(label), "loss": loss_dist.numpy()[i]})
+    # loss = pd.DataFrame(loss)
+    # sns.boxplot(data=loss, x="label", y="loss", ax=ax)
+    # sns.stripplot(data=loss, x="label", y="loss", ax=ax)
+    # f.savefig("dist.png", dpi=200)
 
     # f, ax = plt.subplots()
     # fpr, tpr, thresholds = roc_curve(y_test, loss_dist.numpy())

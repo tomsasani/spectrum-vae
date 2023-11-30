@@ -252,7 +252,7 @@ class ContextEncoder(Model):
 
         decoder_ = []
 
-        # decoder_.append(layers.BatchNormalization())
+        decoder_.append(layers.BatchNormalization())
 
         # convolve back to final feature map size
         decoder_.extend(
