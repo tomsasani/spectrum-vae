@@ -7,7 +7,7 @@ import seaborn as sns
 import numpy as np
 
 sim = simulation.simulate_exp
-N = 1_000
+N = 10_000
 
 normal_root_dist = np.array([0.25] * 4)
 
@@ -33,7 +33,7 @@ train_normal = gen.simulate_batch(
 labels_normal = np.zeros(N)# * global_vars.NUM_HAPLOTYPES)
 
 train_weird = gen.simulate_batch(
-    N // 100,
+    N // 1_000,
     normal_root_dist,
     [1e-8],
     effect_size=1.0,
@@ -41,7 +41,7 @@ train_weird = gen.simulate_batch(
     one_hot=ONE_HOT,
     plot=False,
 )
-labels_weird = np.ones((N // 100))
+labels_weird = np.ones((N // 1_000))
 
 X_train = np.concatenate((train_normal, train_weird), axis=0)
 y_train = np.concatenate((labels_normal, labels_weird))

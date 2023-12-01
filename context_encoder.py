@@ -252,7 +252,7 @@ class ContextEncoder(Model):
 
         decoder_ = []
 
-        decoder_.append(layers.BatchNormalization())
+        #decoder_.append(layers.BatchNormalization())
 
         # convolve back to final feature map size
         decoder_.extend(
@@ -270,7 +270,7 @@ class ContextEncoder(Model):
 
         # loop over filter sizes in reverse, skipping final
         # layer.
-        for filter_size in FILTER_SIZES[::-1][1:-1]:
+        for filter_size in FILTER_SIZES[::-1][1:]:
             # block is a convolution + maxpool
             block = [
                 layers.Conv2DTranspose(
@@ -319,8 +319,8 @@ class Discriminator(Model):
     def __init__(
         self,
         input_shape: Tuple[int] = (
-            global_vars.NUM_HAPLOTYPES // 2,
-            global_vars.NUM_SNPS // 2,
+            global_vars.NUM_HAPLOTYPES,
+            global_vars.NUM_SNPS,
             global_vars.NUM_CHANNELS,
         ),
         kernel_size: int = 4,
@@ -329,7 +329,7 @@ class Discriminator(Model):
 
         disc_ = [layers.Input(shape=input_shape)]
 
-        for filter_size in FILTER_SIZES[1:]:
+        for filter_size in FILTER_SIZES:
             block = [
                 layers.Conv2D(
                     filter_size,

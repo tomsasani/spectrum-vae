@@ -21,6 +21,43 @@ from sklearn.metrics import roc_curve
 from tensorflow.keras.datasets import fashion_mnist
 
 
+def batch_random_mask(X: np.ndarray, pct_mask: float = 0.25):
+    # get shape of array
+    batch_size, n_haps, n_snps, n_channels = X.shape
+
+    mask_arr = np.zeros(X.shape)
+
+    for i in np.arange(batch_size):
+        i_mask = create_random_image_mask(
+            X[i],
+            pct_mask=pct_mask,
+        )
+        mask_arr[i] = i_mask
+    return mask_arr
+
+
+def create_random_image_mask(X: np.ndarray, pct_mask: float = 0.25):
+    # get shape of array
+    n_haps, n_snps, n_channels = X.shape
+
+    mask = np.zeros(X.shape)
+
+    # define random blocks that are each 1/16 of the width of the image
+    segment_width = n_snps // 8
+
+    mask[segment_width : segment_width * 3, segment_width : segment_width * 3, :] = 1
+
+    while (np.sum(mask[:, :, 0]) / (n_snps**2)) < pct_mask:
+        # pick a random location in the image where we'll initialize
+        # the "bottom left" of the segment mask.
+        rand_x = np.random.randint(n_snps - segment_width)
+        rand_y = np.random.randint(n_snps - segment_width)
+
+        mask[rand_x : rand_x + segment_width, rand_y : rand_y + segment_width, :] = 1
+
+    return mask
+
+
 def create_image_mask(X: np.ndarray, pct_mask: float = 0.25):
     # get shape of array
     n_haps, n_snps, n_channels = X.shape
@@ -75,7 +112,6 @@ def batch_sort(X: np.ndarray):
     return X_new
 
 
-
 def build_model(
     input_shape: Tuple[int] = (
         1,
@@ -110,7 +146,7 @@ def build_optimizer(
     beta_1: float = 0.5,
     beta_2: float = 0.999,
     decay_rate: float = 0.96,
-    decay_steps: int = 10,
+    decay_steps: int = 50,
 ):
     lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
         learning_rate,
@@ -154,17 +190,19 @@ def measure_disc_loss(discriminator, y_true, y_pred, reduction: str = "auto"):
 def measure_recon_loss(
     y_true,
     y_pred,
+    mask,
     reduction: str = "auto",
 ):
     loss_func = tf.keras.losses.MeanSquaredError(reduction=reduction)
     #return tf.reduce_mean(mask * ((y_true - y_pred) ** 2))
-    return loss_func(y_true, y_pred)
+    return loss_func(y_true, y_pred, sample_weight=mask[:, :, :, 0] * 10)
 
 
 def measure_total_loss(
     discriminator,
     y_true,
     y_pred,
+    mask,
     l2_weight: float = 0.999,
     reduction: str = "auto",
 ):
@@ -177,6 +215,7 @@ def measure_total_loss(
     recon_loss = measure_recon_loss(
         y_true,
         y_pred,
+        mask,
         reduction=reduction,
     )
 
@@ -189,7 +228,7 @@ def train_step(
     ce_opt,
     disc_opt,
     X: np.ndarray,
-    y: np.ndarray,
+    mask: np.ndarray,
     l2_weight: float = 0.999,
 ):
     with tf.GradientTape(persistent=True) as tape:
@@ -200,12 +239,12 @@ def train_step(
         # 0s at dropped pixels. in other words, we run the context encoder
         # on the original image with the masked pixels removed.
 
-        predicted_fill = context_encoder(X, training=True)
+        predicted_fill = context_encoder(X * (1 - mask), training=True)
 
         # calculate simple L2 loss between predicted and true fill. we weight
         # the L2 loss by the dropped pixels.
-        l2_loss = measure_recon_loss(y, predicted_fill)
-        disc_loss = measure_disc_loss(discriminator, y, predicted_fill)
+        l2_loss = measure_recon_loss(X, predicted_fill, mask)
+        disc_loss = measure_disc_loss(discriminator, X, predicted_fill)
         # calculate total loss that we'll use to update the context encoder
         total_loss = (l2_loss * l2_weight) + (disc_loss * (1 - l2_weight))
 
@@ -278,14 +317,20 @@ def main():
 
     # generate a masked version of the input, along with
     # the true values present in the mask
-    X_train_masked, X_train_true = batch_mask(X_train, pct_mask=0.25)
-    X_test_masked, X_test_true = batch_mask(X_test, pct_mask=0.25)
+    # X_train_masked, X_train_true = batch_mask(X_train, pct_mask=0.25)
+    # X_test_masked, X_test_true = batch_mask(X_test, pct_mask=0.25)
+
+    # generate random masks for every image
+    X_train_mask = batch_random_mask(X_train, pct_mask=0.25)
+    X_test_mask = batch_random_mask(X_test, pct_mask=0.25)
 
     if CIFAR:
         f, axarr = plt.subplots(1, 2, figsize=(16, 8), sharey=False)
         I = np.random.randint(X_train.shape[0])
-        axarr[0].imshow(X_train[I])
-        axarr[1].imshow(X_train_masked[I])
+        a = axarr[0].imshow(X_train[I], vmin=-1, vmax=1)
+        b = axarr[1].imshow(X_train[I] * (1 - X_train_mask[I]), vmin=-1, vmax=1)
+        f.colorbar(b, ax=axarr[1])
+
         f.tight_layout()
         f.savefig("orig.png", dpi=200)
     else:
@@ -300,7 +345,7 @@ def main():
                 cbar=True,
             )
             sns.heatmap(
-                X_train_masked[0, :, :, channel_i],
+                X_train[0, :, :, channel_i] * (1 - X_train_mask[0, :, :, channel_i]),
                 ax=axarr[1, channel_i],
                 cbar=True,
             )
@@ -311,15 +356,15 @@ def main():
     model = build_model(
         input_shape=input_shape[1:],
         activation="relu",
-        latent_dimensions=4_000,
+        latent_dimensions=1_000,
     )
 
     disc = context_encoder.Discriminator()
     disc.build_graph(
         (
             1,
-            global_vars.NUM_HAPLOTYPES // 2,
-            global_vars.NUM_SNPS // 2,
+            global_vars.NUM_HAPLOTYPES,
+            global_vars.NUM_SNPS,
             global_vars.NUM_CHANNELS,
         )
     )
@@ -330,7 +375,8 @@ def main():
     ce_optimizer = build_optimizer(learning_rate=LR * 10)
     disc_optimizer = build_optimizer(learning_rate=LR)
 
-    EPOCHS = 50
+    EPOCHS = 20
+    EPOCHS += 1
     BATCH_SIZE = 64
 
     res = []
@@ -345,18 +391,17 @@ def main():
                 disc,
                 ce_optimizer,
                 disc_optimizer,
-                X_train_masked[start_idx:end_idx],
-                X_train_true[start_idx:end_idx],
+                X_train[start_idx:end_idx],
+                X_train_mask[start_idx:end_idx],
             )
-        
 
         # check out the model at each step
-        predictions = model.predict(X_test_masked)
+        predictions = model.predict(X_test * (1 - X_test_mask))
 
         # measure test loss
-        disc_loss_test = measure_disc_loss(disc, X_test_true, predictions)
-        recon_loss_test = measure_recon_loss(X_test_true, predictions)
-        total_loss_test = measure_total_loss(disc, X_test_true, predictions)
+        disc_loss_test = measure_disc_loss(disc, X_test, predictions)
+        recon_loss_test = measure_recon_loss(X_test, predictions, X_test_mask)
+        total_loss_test = measure_total_loss(disc, X_test, predictions, X_test_mask)
 
         print(f"Discriminator training loss: {disc_loss.numpy()}")
         print(f"L2 training loss: {recon_loss.numpy()}")
@@ -398,13 +443,11 @@ def main():
                 for plot_idx, idx in enumerate(
                     np.random.randint(X_test.shape[0], size=4)
                 ):
-                    # for channel_i in range(global_vars.NUM_CHANNELS):
-                    axarr[0, plot_idx].imshow(X_test[idx, :, :, :])
-                    sub = X_test_masked[idx, :, :, :]
-                    axarr[1, plot_idx].imshow(sub)
-                    pred_dims = predictions.shape[1] // 2
-                    sub[pred_dims:pred_dims * 3, pred_dims:pred_dims * 3, :] += predictions[idx, :, :, :]
-                    axarr[2, plot_idx].imshow(sub)
+                    sub = X_test[idx, :, :, :]
+                    mask = X_test_mask[idx, :, :, :]
+                    axarr[0, plot_idx].imshow(sub)
+                    axarr[1, plot_idx].imshow(sub * (1 - mask))
+                    axarr[2, plot_idx].imshow(predictions[idx, :, :, :])
 
                 f.tight_layout()
                 f.savefig(f"img/preds.{epoch}.png", dpi=200)
@@ -415,27 +458,27 @@ def main():
                 I = np.random.randint(X_test.shape[0])
                 for channel_i in range(global_vars.NUM_CHANNELS):
                     # plot original image
+                    sub = X_test[I, :, :, channel_i]
+                    mask = X_test_mask[I, :, :, channel_i]
                     sns.heatmap(
-                        X_test[I, :, :, channel_i],
+                        sub,
                         ax=axarr[channel_i, 0],
                         cbar=True,
                         vmin=-1,
                         vmax=1,
                     )
                     # plot masked image
-                    sub = X_test_masked[I, :, :, channel_i]
                     sns.heatmap(
-                        sub,
+                        sub * (1 - mask),
                         ax=axarr[channel_i, 1],
                         cbar=True,
                         vmin=-1,
                         vmax=1,
                     )
                     # plot filled in image
-                    pred_dims = predictions.shape[1] // 2
-                    sub[pred_dims:pred_dims * 3, pred_dims:pred_dims * 3] += predictions[I, :, :, channel_i]
+                    
                     sns.heatmap(
-                        sub,
+                        predictions[I, :, :, channel_i],
                         ax=axarr[channel_i, 2],
                         cbar=True,
                         vmin=-1,
@@ -445,12 +488,13 @@ def main():
                 f.tight_layout()
                 f.savefig(f"img/preds.{epoch}.png", dpi=200)
 
-    predictions = model.predict(X_test_masked)
+    predictions = model.predict(X_test * (1 - X_test_mask))
 
     loss_dist = tf.reduce_mean(
         measure_recon_loss(
-            X_test_true,
+            X_test,
             predictions,
+            X_test_mask,
             reduction="none",
         ),
         axis=(1, 2),
