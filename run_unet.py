@@ -66,7 +66,7 @@ def build_optimizer(
     return optimizer
 
 
-def measure_disc_loss(discriminator, y_true, y_pred, reduction: str = "auto"):
+def measure_disc_loss(disc_real_output, disc_generated_output, reduction: str = "auto"):
     """discriminator loss accepts 2 inputs: real images and generated images.
     the 'true' loss measures sigmoid cross entropy between the real images and
     an array of ones. the 'fake' loss measure cross entropy between the
@@ -86,29 +86,49 @@ def measure_disc_loss(discriminator, y_true, y_pred, reduction: str = "auto"):
         reduction=reduction,
     )
 
-    # calculate adversarial loss. take the average of the loss of the
-    # discriminator on both real and predicted fills
-    true_disc_prediction = discriminator(y_true, training=True)
-    true_disc_labels = tf.ones_like(true_disc_prediction)
-    true_disc_loss = loss_func(
-        true_disc_labels,
-        true_disc_prediction,
+    real_loss = loss_func(tf.ones_like(disc_real_output), disc_real_output)
+    generated_loss = loss_func(tf.zeros_like(disc_generated_output), disc_generated_output)
+
+    total_disc_loss = real_loss + generated_loss
+
+    return total_disc_loss
+
+
+def measure_recon_loss(
+    y_true,
+    y_pred,
+    reduction: str = "auto",
+):
+    loss_func = tf.keras.losses.MeanSquaredError(reduction=reduction)
+    return loss_func(y_true, y_pred)
+
+
+def measure_total_loss(
+    discriminator,
+    y_true,
+    y_pred,
+    l2_weight: float = 0.999,
+    reduction: str = "auto",
+):
+    disc_loss = measure_disc_loss(
+        discriminator,
+        y_pred,
+        y_true,
+        reduction=reduction,
+    )
+    recon_loss = measure_recon_loss(
+        y_true,
+        y_pred,
+        reduction=reduction,
     )
 
-    fake_disc_prediction = discriminator(y_pred, training=True)
-    fake_disc_labels = tf.zeros_like(fake_disc_prediction)
-    fake_disc_loss = loss_func(
-        fake_disc_labels,
-        fake_disc_prediction,
-    )
-
-    return true_disc_loss + fake_disc_loss
+    return (recon_loss * l2_weight) + (disc_loss * (1 - l2_weight))
 
 
 def measure_generator_loss(
-    y_true,
-    y_pred,
-    disc_y_pred,
+    disc_generated_output,
+    gen_output,
+    y,
     lambda_weight: int = 100,
     reduction: str = "auto",
 ):
@@ -131,10 +151,10 @@ def measure_generator_loss(
     )
 
     # measure GAN loss
-    gan_loss = bce_loss_func(tf.ones_like(disc_y_pred), disc_y_pred)
+    gan_loss = bce_loss_func(tf.ones_like(disc_generated_output), disc_generated_output)
 
     # measure L1 loss
-    l1_loss = mae_loss_func(y_true, y_pred)
+    l1_loss = mae_loss_func(y, gen_output)
 
     total_gen_loss = gan_loss + (lambda_weight * l1_loss)
 
@@ -151,24 +171,24 @@ def train_step(
 ):
     with tf.GradientTape() as gen_tape, tf.GradientTape() as disc_tape:
         # make predictions on the input data
-        predicted = generator(X, training=True)
+        gen_output = generator(X, training=True)
 
-        # apply the discriminator to the generated data
-        disc_y_pred = discriminator(predicted, training=True)
+        disc_real_output = discriminator([X, y], training=True)
+        disc_generated_output = discriminator([X, gen_output], training=True)
 
         # measure the total loss for the generator
-        gen_total_loss, gan_loss, l1_loss = measure_generator_loss(
+        gen_total_loss, gen_gan_loss, gen_l1_loss = measure_generator_loss(
+            disc_generated_output,
+            gen_output,
             y,
-            predicted,
-            disc_y_pred,
         )
         # measure the total loss for the discriminator
-        disc_total_loss = measure_disc_loss(discriminator, y, predicted)
+        disc_loss = measure_disc_loss(disc_real_output, disc_generated_output)
 
     # update discriminator using discriminator loss (so
     # that discriminator gets better)
     disc_grads = disc_tape.gradient(
-        disc_total_loss,
+        disc_loss,
         discriminator.trainable_variables,
     )
     disc_opt.apply_gradients(zip(disc_grads, discriminator.trainable_variables))
@@ -180,7 +200,7 @@ def train_step(
     )
     ce_opt.apply_gradients(zip(ce_grads, generator.trainable_variables))
 
-    return disc_total_loss, gen_total_loss, gan_loss, l1_loss
+    return disc_loss, gen_total_loss, gen_gan_loss, gen_l1_loss
 
 
 def format_cifar(data: np.ndarray):
@@ -200,7 +220,7 @@ def main():
     if CIFAR:
         (X_train, y_train), (X_test, y_test) = tf.keras.datasets.cifar10.load_data()
 
-        N = 1_000
+        N = 2_000
 
         # training data are paired grayscale/RGB images
 
@@ -257,15 +277,15 @@ def main():
     model.summary()
 
     disc = unet.Discriminator()
-    disc.build_graph(
-        (
-            1,
-            global_vars.NUM_HAPLOTYPES,
-            global_vars.NUM_SNPS,
-            global_vars.OUTPUT_CHANNELS,
-        )
-    )
-    disc.discriminator.summary()
+    # disc.build_graph(
+    #     (
+    #         1,
+    #         global_vars.NUM_HAPLOTYPES,
+    #         global_vars.NUM_SNPS,
+    #         global_vars.OUTPUT_CHANNELS,
+    #     )
+    # )
+    disc.summary()
 
     # context encoder LR is 10x higher
     LR = 2e-4
@@ -300,14 +320,15 @@ def main():
         predictions = model.predict(X_test)
 
         # make discriminator predictions on the predicted data
-        disc_predictions = disc(predictions)
+        disc_real_predictions = disc([X_test, y_test])
+        disc_fake_predictions = disc([X_test, predictions])
 
         # measure test loss
-        disc_loss_test = measure_disc_loss(disc, y_test, predictions)
+        disc_loss_test = measure_disc_loss(disc_real_predictions, disc_fake_predictions)
         gen_loss_test, gan_loss_test, l1_loss_test = measure_generator_loss(
-            y_test,
+            disc_fake_predictions,
             predictions,
-            disc_predictions,
+            y_test,
         )
 
         for loss, label, group in zip(
