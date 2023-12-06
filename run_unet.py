@@ -293,7 +293,7 @@ def main():
     disc_optimizer = build_optimizer(learning_rate=LR)
 
     EPOCHS = 50
-    BATCH_SIZE = 64
+    BATCH_SIZE = 32
 
     res = []
 
