@@ -142,7 +142,7 @@ class Discriminator(Model):
 
         disc_ = [layers.Input(shape=input_shape)]
 
-        for filter_size in FILTER_SIZES[:-2]:
+        for fi, filter_size in enumerate(FILTER_SIZES[:-2]):
             block = [
                 layers.Conv2D(
                     filter_size,
@@ -150,20 +150,21 @@ class Discriminator(Model):
                     strides=(2, 2),
                     padding="same",
                     activation=layers.LeakyReLU(0.2),
-                ),
-                layers.BatchNormalization(),
+                )
             ]
+            if fi != 0:
+                block.append(layers.BatchNormalization())
             disc_.extend(block)
 
         final_block = [
-                layers.Conv2D(
-                    1,
-                    (kernel_size, kernel_size),
-                    strides=(1, 1),
-                    padding="valid",
-                    # activation="sigmoid",
-                ),
-            ]
+            layers.Conv2D(
+                1,
+                (kernel_size, kernel_size),
+                strides=(1, 1),
+                padding="valid",
+                activation="sigmoid",
+            ),
+        ]
         disc_.extend(final_block)
 
         disc_.append(layers.Flatten())
